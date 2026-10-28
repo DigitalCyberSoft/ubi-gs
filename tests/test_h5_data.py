@@ -77,10 +77,10 @@ class H5_SerializerTests(unittest.TestCase):
     # data
     self.assertEqual(room_info.group_id, 1000)
     self.assertEqual(room_info.lobby_sv_id, 1)
-    self.assertEqual(room_info.host_ip.checksum, 0)
+    self.assertEqual(room_info.host_ip.family, 0)
+    self.assertEqual(room_info.host_ip.port, 0)
     self.assertEqual(room_info.host_ip.ip, "0.0.0.0")
-    self.assertEqual(room_info.host_ip.int1, 0)
-    self.assertEqual(room_info.host_ip.int2, 0)
+    self.assertEqual(room_info.host_ip.zero, bytes(8))
     self.assertEqual(room_info.host_logic_init, True)
     self.assertEqual(room_info.group_name, "mimak's Game")
     self.assertEqual(room_info.password, "")
@@ -116,6 +116,23 @@ class H5_SerializerTests(unittest.TestCase):
     info = h5_data.H5_Serializer().deserialize_roominfo(input)
     output = h5_data.H5_Serializer().serialize_roominfo(info)
     self.assertEqual(input, output)
+
+class H5_IPTests(unittest.TestCase):
+  """Tests for address structures of `RoomInfo` and `PlayerInfo`."""
+  def test_sockaddr_in(self):
+    # host's public address advertised in room info, 127.0.0.1:8888
+    buf = bytes([0x02, 0x00, 0x22, 0xB8, 0x7F, 0x00, 0x00, 0x01]) + bytes(8)
+    ip = h5_data.H5_IP(buf)
+    self.assertEqual(ip.family, 2)
+    self.assertEqual(ip.port, 8888)
+    self.assertEqual(ip.ip, "127.0.0.1")
+    self.assertEqual(ip.serialize(), buf)
+
+  def test_local_ip(self):
+    buf = bytes([0xC0, 0xA8, 0x00, 0x29]) + bytes(12)
+    ip = h5_data.H5_LocalIP(buf)
+    self.assertEqual(ip.ip, "192.168.0.41")
+    self.assertEqual(ip.serialize(), buf)
 
 if __name__ == '__main__':
   unittest.main()

@@ -1,7 +1,8 @@
 from enum import Enum
 from ctypes import c_int32, c_uint32
 from group import Room
-from utils import read_u32, read_as_u32_list, read_u16, write_u32, write_u32_list, write_u16
+import socket
+from utils import read_u32, read_as_u32_list, read_u16, read_u16_be, write_u32, write_u32_list, write_u16, write_u16_be
 from uuid import UUID
 
 class H5_STREAM_TYPE(Enum):
@@ -62,44 +63,57 @@ class H5_Stream:
     return (5 if self.size_4b else 2) + self.size
 
 class H5_IP:
-  """IPv4 address structure, contains some other information."""
+  """`sockaddr_in` structure (16B): address family, port and IPv4 address, both in network byte order."""
   def __init__(self, buf: bytes = None):
     if buf is None:
-      self.checksum = 0
+      self.family = 0
+      self.port = 0
       self.ip = "0.0.0.0"
-      self.int1 = 0
-      self.int2 = 0
+      self.zero = bytes(8)
     else:
       if len(buf) != 16:
         raise ValueError("H5_IP: invalid input, deserialization failed")
-      # unknown value
-      self.checksum = read_u32(buf[0:4])
-      ip = read_u32(buf[4:8])
-      pt4 = ip & 0xff
-      pt3 = (ip & 0xff00) >> 8
-      pt2 = (ip & 0xff0000) >> 16
-      pt1 = (ip & 0xff000000) >> 24
-      # confirmed
-      self.ip = f"{pt1}.{pt2}.{pt3}.{pt4}"
-      # unknown, zeroes
-      self.int1 = read_u32(buf[8:12])
-      self.int2 = read_u32(buf[12:16])
+      # AF_INET (2) when set
+      self.family = read_u16(buf[0:2])
+      self.port = read_u16_be(buf[2:4])
+      self.ip = socket.inet_ntoa(buf[4:8])
+      # sin_zero
+      self.zero = buf[8:16]
 
   def serialize(self):
     """Returns a serialized buffer."""
     buf = bytearray()
-    buf.extend(write_u32(self.checksum))
-    nbs = self.ip.split(".")
-    if len(nbs) != 4:
+    buf.extend(write_u16(self.family))
+    buf.extend(write_u16_be(self.port))
+    try:
+      buf.extend(socket.inet_aton(self.ip))
+    except OSError:
       raise ValueError("H5_IP: invalid IPv4 address, serialization failed")
-    ip = int(nbs[0]) << 24
-    ip |= int(nbs[1]) << 16
-    ip |= int(nbs[2]) << 8
-    ip |= int(nbs[3])
-    buf.extend(write_u32(ip))
-    buf.extend(write_u32(self.int1))
-    buf.extend(write_u32(self.int2))
+    buf.extend(self.zero)
     return bytes(buf)
+
+  def __repr__(self):
+    return f"'{self.ip}:{self.port}'"
+
+class H5_LocalIP:
+  """Local (private) IPv4 address of `PlayerInfo` in network byte order, padded to 16B."""
+  def __init__(self, buf: bytes = None):
+    if buf is None:
+      self.ip = "0.0.0.0"
+      self.padding = bytes(12)
+    else:
+      if len(buf) != 16:
+        raise ValueError("H5_LocalIP: invalid input, deserialization failed")
+      self.ip = socket.inet_ntoa(buf[0:4])
+      self.padding = buf[4:16]
+
+  def serialize(self):
+    """Returns a serialized buffer."""
+    try:
+      ip = socket.inet_aton(self.ip)
+    except OSError:
+      raise ValueError("H5_LocalIP: invalid IPv4 address, serialization failed")
+    return ip + self.padding
 
   def __repr__(self):
     return f"'{self.ip}'"
@@ -109,11 +123,11 @@ class H5_PlayerInfo:
     if buf is None:
       self.username = ""
       """idx = 2"""
-      self.ext_ip = ""
-      """idx = 3; external (public) IPv4"""
+      self.ext_ip = H5_IP()
+      """idx = 3; external (public) address"""
       self.local_port = 0
       """idx = 4; local (private) port"""
-      self.local_ip = H5_IP()
+      self.local_ip = H5_LocalIP()
       """idx = 4; local (private) IPv4"""
       self.int38 = 0
       """idx = 5; unknown value"""
@@ -165,14 +179,13 @@ class H5_PlayerInfo:
     # ip - idx 3
     field = H5_Stream(buf[len(field):])
     if field.id == 3 and field.size == 16:
-      # assuming the same 16B structure layout
-      ip = H5_IP(field.data)
+      ip = H5_LocalIP(field.data)
     else:
       raise ValueError(f"PlayerInfo: missing/invalid field - PortIP.IP ({field.id})")
     return port, ip
 
   @staticmethod
-  def write_port_ipv4(port: int, ip: H5_IP):
+  def write_port_ipv4(port: int, ip: H5_LocalIP):
     """Writes port and IPv4 address; compare with `write_ipv4`"""
     buf = bytearray()
     field = H5_Stream()
@@ -183,7 +196,6 @@ class H5_PlayerInfo:
     buf.extend(field.write())
 
     field.id = 3
-    # assuming the same 16B structure layout
     field.data = ip.serialize()
     field.size = len(field.data)
     buf.extend(field.write())
@@ -1034,7 +1046,7 @@ class H5_Serializer:
 
   @staticmethod
   def read_ipv4(buf: bytes, room_info: bool):
-    """Reads IPv4 address encoded on 16B. Shared between `RoomInfo` and `PlayerInfo`."""
+    """Reads `sockaddr_in` address encoded on 16B. Shared between `RoomInfo` and `PlayerInfo`."""
     # nested field - idx 2
     field = H5_Stream(buf)
     if field.id == 2 and field.size == 16:
@@ -1045,7 +1057,7 @@ class H5_Serializer:
 
   @staticmethod
   def write_ipv4(ip: H5_IP):
-    """Writes IPv4 address structure encoded on 16B. Shared between `RoomInfo` and `PlayerInfo`."""
+    """Writes `sockaddr_in` address structure encoded on 16B. Shared between `RoomInfo` and `PlayerInfo`."""
     # nested field - idx 2
     field = H5_Stream()
     field.id = 2
