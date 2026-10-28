@@ -145,6 +145,14 @@ class LobbyTests(unittest.TestCase):
     members = notifs(carol)[0][1][4]
     self.assertEqual(members[1][4], b'data')
 
+  def test_set_player_info_outside_lobby(self):
+    # clients outside any lobby don't get each other's player data (#58)
+    first = make_client('first')
+    second = make_client('second')
+    res = request(first, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    self.assertEqual(res.dl.lst, ['38', ['42']])
+    self.assertEqual(notifs(second), [])
+
   def test_member_data_from_room_info(self):
     alice = login('alice')
     bob = login('bob')

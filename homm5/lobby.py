@@ -258,7 +258,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           # the game's own player data (ladder info), attached to its member info
           clt.player_info = bytes(req.dl.lst[1][0])
           res = gsm.LobbyResultResponse(req)
-          for member in lobby_members(clt.lobby_id):
+          # only to the client's lobby: lobby_members(None) would be every client outside a lobby
+          for member in lobby_members(clt.lobby_id) if clt.lobby_id is not None else []:
             if member is not clt:
               send_notif(member, gsm.LOBBY_MSG.PLAYER_INFO_UPDATE, [clt.username, clt.player_info])
         case gsm.LOBBY_MSG.START_GAME:
