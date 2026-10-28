@@ -69,6 +69,17 @@ def start(service):
     except ConnectionRefusedError:
       threading.Event().wait(0.05)
 
+class LobbyRobustnessTests(unittest.TestCase):
+  def test_unknown_request_keeps_player(self):
+    sock = start(lobby)
+    try:
+      # a lobby message the server doesn't know (subtype 99) must not close the connection
+      sock.sendall(game_message(gsm.MESSAGE_TYPE.LOBBY_MSG, ['99', ['1']]))
+      sock.sendall(STILLALIVE)
+      self.assertEqual(sock.recv(64)[4], 0x3A)
+    finally:
+      sock.close()
+
 class ProxyModuleTests(unittest.TestCase):
   """Proxy module handshakes."""
   def test_module_ready_not_echoed(self):
