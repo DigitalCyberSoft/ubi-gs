@@ -141,13 +141,18 @@ class IrcLimitsTests(unittest.TestCase):
     # silent clients go after 1.5s; this one answered, so it is still served after that
     time.sleep(1)
     a.sendall(bytes(ircm.IRCMessage.from_str('PING :check\r\n')))
-    replies = b''
+    replies, buf = b'', b''
     try:
       while b'PONG' not in replies:
         data = a.recv(1024)
         if not data:
           break
-        replies += ircm.IRCMessage(data[:2 + int.from_bytes(data[:2], 'big')]).payload
+        buf += data
+        # one read can hold several frames
+        while len(buf) >= 2 and len(buf) >= 2 + int.from_bytes(buf[:2], 'big'):
+          end = 2 + int.from_bytes(buf[:2], 'big')
+          replies += ircm.IRCMessage(buf[:end]).payload
+          buf = buf[end:]
     except OSError:
       pass
     self.assertIn(b'PONG', replies)
