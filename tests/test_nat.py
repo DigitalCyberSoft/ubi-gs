@@ -15,19 +15,19 @@ SENDER_SIG = 0x0001
 """Sender signature from the game's SYN window."""
 
 def make_checksum(data: bytes, init: int):
-  """The game's segment checksum (`clSegment::CalculateCheckSum`), with `init` in the checksum field."""
+  """The game's segment checksum check (0x0047afe0), with `init` in the checksum field."""
   data = struct.pack('<H', init) + data[2:]
+  # uint32 accumulator, an odd first byte is a signed char
   check_base = 0
   pos = 0
   if len(data) % 2 == 1:
-    check_base += data[0]
+    check_base = struct.unpack_from('<b', data, 0)[0] & 0xFFFFFFFF
     pos = 1
   for _ in range(len(data) >> 1):
-    check_base += struct.unpack_from('<H', data, pos)[0]
+    check_base = (check_base + struct.unpack_from('<H', data, pos)[0]) & 0xFFFFFFFF
     pos += 2
-  checksum = (check_base & 0xFFFF) + (check_base >> 16)
-  checksum += checksum >> 16
-  return ~checksum & 0xFFFF
+  folded = (check_base >> 16) + (check_base & 0xFFFF)
+  return ~((folded >> 16) + folded) & 0xFFFF
 
 def make_segment(flags: int, seg: int, ack: int, payload: bytes = b''):
   """Builds a game SRP segment."""
@@ -79,6 +79,16 @@ class NatTests(unittest.TestCase):
     self.assertEqual(res.header.seg, 2)
     self.assertEqual(res.header.ack, 1)
     self.assertEqual(res.header.checksum, make_checksum(bytes(res), CHECKSUM_INIT))
+
+  def test_checksum_odd_length(self):
+    # odd-length segments with a checksum seed >= 0x80 in the first byte
+    clt = make_client()
+    req = srp.SRPRequest(make_segment(0, 1, 0, make_nat_request('1')))
+    for ping_id in range(1, 40):
+      msg = gsm.NatResponse(req.segment.msg, gsm.NAT_MSG.PORT_ID, ping_id * 0x1234567 & 0xFFFFFFFF, 7781)
+      res = srp.SRPResponse(req, clt, msg)
+      buf = bytes(res)
+      self.assertEqual(res.header.checksum, make_checksum(buf, CHECKSUM_INIT), f'{len(buf)} bytes')
 
   def test_ping_id_round_trip(self):
     req = gsm.Message(None, in_buf=make_nat_request('1'))

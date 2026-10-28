@@ -212,8 +212,8 @@ class SRPResponse:
     odd_len = len(data) % 2 == 1
     
     if odd_len:
-      # Add the first byte as extra
-      check_base += data[0]
+      # Add the first byte as extra, sign-extended like the game's `char`
+      check_base += data[0] if data[0] < 0x80 else data[0] - 0x100
       trunc_pos += 1
 
     if half_len > 0:
@@ -221,6 +221,8 @@ class SRPResponse:
         check_base += struct.unpack_from('<H', data, trunc_pos)[0]
         trunc_pos += 2
         
+    # 32-bit accumulator
+    check_base &= 0xFFFFFFFF
     checksum = check_base & 0xFFFF
     checksum += check_base >> 16
     checksum += checksum >> 16
