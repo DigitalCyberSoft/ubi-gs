@@ -68,23 +68,15 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
 
 def handle_client(clt: client.TcpClient):
   """Serves a connected game client until it disconnects."""
+  reader = gsm.MessageReader()
   try:
     while True:
-      data = clt.conn.recv(4096)
+      data = clt.conn.recv(65536)
       if data:
-        req = gsm.Message(clt.sv_bf_key, in_buf=data)
-        if req.header.size < len(data):
-          bundle = gsm.GSMessageBundle(req, data[req.header.size:], clt)
-          print(bundle)
-          for msg in bundle.msgs:
-            print(msg)
-            res = handle_req(clt, msg)
-            if res:
-              print(res)
-              clt.conn.sendall(bytes(res))
-        else:
-          print(req)
-          res = handle_req(clt, req)
+        for frame in reader.feed(data):
+          msg = gsm.Message(clt.sv_bf_key, in_buf=frame)
+          print(msg)
+          res = handle_req(clt, msg)
           if res:
             print(res)
             clt.conn.sendall(bytes(res))
