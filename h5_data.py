@@ -1040,6 +1040,25 @@ class H5_Serializer:
     buf.extend(self.streams[H5_STREAM_TYPE.LOOKUP_TABLE.name].write())
     return bytes(buf)
 
+  def deserialize_playerinfo(self, buf: bytes) -> H5_PlayerInfo:
+    """Reads a `PlayerInfo` structure from a serialized buffer (`LOBBY_MSG.SET_PLAYER_INFO`)."""
+    return H5_PlayerInfo(self.data_stream(buf).data)
+
+  def data_stream(self, buf: bytes) -> H5_Stream:
+    """Reads the streams of a serialized buffer, returns its data stream."""
+    size = len(buf)
+    pos = 0
+    while pos < size:
+      stream = H5_Stream(buf)
+      bts_read = len(stream)
+      pos += bts_read
+      self.streams[H5_STREAM_TYPE(stream.id).name] = stream
+      buf = buf[bts_read:]
+    data_stream = self.streams.get(H5_STREAM_TYPE.COMPRESSED_DATA.name)
+    if data_stream is None:
+      raise ValueError("Data stream missing in the buffer.")
+    return data_stream
+
   def deserialize_roominfo(self, buf: bytes) -> H5_RoomInfo:
     """Reads `CRoomInfo` structure from a serialized `group.Room.group_info` buffer."""
     size = len(buf)

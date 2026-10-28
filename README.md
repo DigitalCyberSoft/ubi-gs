@@ -155,7 +155,7 @@ The services are public by default: they are meant to be reached by players over
 
 **What to tell players:**
 - Use a throwaway password, never a real one. The game's protocol from 2006 has no real encryption: keyless XOR, Blowfish keys shared by every copy of the game, RSA-512 with e=3 and no TLS (#15).
-- Other players see your IP address. The lobby shares members' addresses, and peer-to-peer matches need them (#12).
+- The players in your game room see your IP address: peer-to-peer matches need it. The rest of the lobby doesn't; member and room lists carry `0.0.0.0` outside the room (#12).
 - Only join servers you trust. The game's network code trusts the server, and a hostile server could crash or corrupt the game client (#16, #7).
 
 ## Troubleshooting: a port is blocked
