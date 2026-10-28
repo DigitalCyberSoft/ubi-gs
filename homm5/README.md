@@ -42,4 +42,4 @@ setvar net_ubi_cdkey_port = 42501
 
 Accounts, friends, ratings and profile data are kept in `ubigs.db` (SQLite) in the repository directory. Set `UBIGS_DB` to use another file.
 
-`UBIGS_DB=:memory:` keeps everything in memory only; nothing is written and everything is gone when the services stop. Each service process has its own memory, so this only works when all the services run in a single process (the all-in-one launcher); with one process per service, use a file.
+`UBIGS_DB=:memory:` keeps everything in memory only; nothing is written and everything is gone when the services stop. Each service process has its own memory, so this only works once all the services run in a single process; `launch.py` and `homm5.bat` still start one process per service, so use a file with them.
