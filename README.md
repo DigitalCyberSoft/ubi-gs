@@ -169,9 +169,23 @@ The services are public by default: they are meant to be reached by players over
     netsh advfirewall firewall add rule name="ubi-gs TCP" dir=in action=allow protocol=TCP localport=80,7777,7779,7782,7783,7784,7785
     netsh advfirewall firewall add rule name="ubi-gs UDP" dir=in action=allow protocol=UDP localport=7780,7781
     ```
-- **Linux:** if firewalld or ufw is active and the ports aren't open, it prints a one-line hint, for example:
-  - `sudo firewall-cmd --permanent --add-port=7777/tcp … && sudo firewall-cmd --reload`
-  - `sudo ufw allow 7777/tcp`
+- **Linux:** a hint, never a failure.
+  - **firewalld or ufw active:** if the ports aren't open, it prints one line, for example `sudo firewall-cmd --permanent --add-port=7777/tcp … && sudo firewall-cmd --reload` or `sudo ufw allow 7777/tcp`.
+  - **Neither active:** it reads the plain iptables/nftables rules (`iptables -S`, `nft list ruleset`).
+    - These usually need root. Without it, it reads a saved ruleset (`/etc/sysconfig/iptables`, `/etc/iptables/rules.v4`, `/etc/nftables.conf`, `/etc/sysconfig/nftables.conf`) if that is readable.
+    - Otherwise it says the check needs root, so you can run it yourself:
+      ```
+      sudo iptables -S INPUT
+      sudo nft list ruleset
+      ```
+    - If the input chain drops traffic by default (policy DROP, or a final catch-all `REJECT`/`drop`) and no rule accepts the server's ports, it prints rules to add, for example:
+      ```
+      sudo iptables -I INPUT -p tcp -m multiport --dports 80,7777,7779,7782,7783,7784,7785 -j ACCEPT
+      sudo iptables -I INPUT -p udp -m multiport --dports 7780,7781 -j ACCEPT
+      sudo nft add rule inet filter input tcp dport { 80, 7777, 7779, 7782, 7783, 7784, 7785 } accept
+      sudo nft add rule inet filter input udp dport { 7780, 7781 } accept
+      ```
+      Save them the way your distribution does, e.g. `iptables-save` or `/etc/nftables.conf`.
 
 The check is a warning only; the server keeps running. A router in front of the server still needs the same ports forwarded to it.
 
