@@ -24,8 +24,9 @@ def sent(clt: client.TcpClient):
   clt.conn.sent.clear()
   return [(m.header.type, m.dl.lst) for m in msgs]
 
-ONLINE = (1).to_bytes(4, 'little')
-OFFLINE = (0).to_bytes(4, 'little')
+ONLINE = (0).to_bytes(4, 'little')
+OFFLINE = (1).to_bytes(4, 'little')
+ZERO = (0).to_bytes(4, 'little')
 
 class FriendsTests(unittest.TestCase):
   def setUp(self):
@@ -45,7 +46,7 @@ class FriendsTests(unittest.TestCase):
     clt = client.TcpClient((FakeConn(), (ip, 50000)))
     router_wm.CLIENTS.append(clt)
     self.request(clt, gsm.MESSAGE_TYPE.LOGINWAITMODULE, [name])
-    self.request(clt, gsm.MESSAGE_TYPE.LOGINFRIENDS, [ONLINE, OFFLINE])
+    self.request(clt, gsm.MESSAGE_TYPE.LOGINFRIENDS, [ZERO, ZERO])
     return clt
 
   def request(self, clt, msg_type, data):
@@ -58,14 +59,14 @@ class FriendsTests(unittest.TestCase):
     alice = self.connect('alice', '10.0.0.2')
     self.connect('bob', '10.0.0.3')
     sent(alice)
-    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['BOB', '', OFFLINE])
+    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['BOB', '', ZERO])
     self.assertEqual(sent(alice), [
       (gsm.MESSAGE_TYPE.GSSUCCESS, [b'K', 'bob']),
-      (gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', OFFLINE, OFFLINE, ''])])
+      (gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', ZERO, ZERO, ''])])
     self.request(alice, gsm.MESSAGE_TYPE.FRIENDLIST, [])
     self.assertEqual(sent(alice), [
       (gsm.MESSAGE_TYPE.GSSUCCESS, [b'Y']),
-      (gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', OFFLINE, OFFLINE, ''])])
+      (gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', ZERO, ZERO, ''])])
     self.request(alice, gsm.MESSAGE_TYPE.DELFRIEND, ['bob'])
     self.assertEqual(sent(alice), [(gsm.MESSAGE_TYPE.GSSUCCESS, [b'L', 'bob'])])
     self.request(alice, gsm.MESSAGE_TYPE.FRIENDLIST, [])
@@ -74,33 +75,33 @@ class FriendsTests(unittest.TestCase):
   def test_unknown_player(self):
     alice = self.connect('alice', '10.0.0.2')
     sent(alice)
-    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['nobody', '', OFFLINE])
+    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['nobody', '', ZERO])
     self.assertEqual(sent(alice), [(gsm.MESSAGE_TYPE.GSFAIL, [b'K', [(1).to_bytes(4, 'little')]])])
-    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['alice', '', OFFLINE])
+    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['alice', '', ZERO])
     self.assertEqual(sent(alice)[0][0], gsm.MESSAGE_TYPE.GSFAIL)
 
   def test_online_and_offline(self):
     alice = self.connect('alice', '10.0.0.2')
     accounts.login('bob', 'pw')
-    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['bob', '', OFFLINE])
+    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['bob', '', ZERO])
     sent(alice)
     # bob logs in: alice is told
     bob = self.connect('bob', '10.0.0.3')
-    self.assertIn((gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', OFFLINE, OFFLINE, '']), sent(alice))
+    self.assertIn((gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', ONLINE, '', ZERO, ZERO, '']), sent(alice))
     # and logs out
     router_wm.CLIENTS.remove(bob)
     router_wm.notify_friend_of(bob, False)
-    self.assertEqual(sent(alice), [(gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', OFFLINE, '', OFFLINE, OFFLINE, ''])])
+    self.assertEqual(sent(alice), [(gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', OFFLINE, '', ZERO, ZERO, ''])])
 
   def test_list_at_login_and_persistence(self):
     alice = self.connect('alice', '10.0.0.2')
     accounts.login('bob', 'pw')
-    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['bob', '', OFFLINE])
+    self.request(alice, gsm.MESSAGE_TYPE.ADDFRIEND, ['bob', '', ZERO])
     router_wm.CLIENTS.clear()
     # a server restart
     accounts.configure(self.path)
     alice = self.connect('alice', '10.0.0.2')
-    self.assertIn((gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', OFFLINE, '', OFFLINE, OFFLINE, '']), sent(alice))
+    self.assertIn((gsm.MESSAGE_TYPE.UPDATEFRIEND, ['bob', OFFLINE, '', ZERO, ZERO, '']), sent(alice))
 
 if __name__ == '__main__':
   unittest.main()

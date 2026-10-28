@@ -561,11 +561,16 @@ class FriendsFailResponse(GSMResponse):
     self.header.type = MESSAGE_TYPE.GSFAIL
     self.dl = List([req.header.type.value.to_bytes(1, 'little'), [reason.to_bytes(4, 'little')]])
 
+FRIEND_ONLINE = 0
+FRIEND_OFFLINE = 1
+"""`UPDATEFRIEND` status: the game keeps (status == 1) per friend (0x00b210f0) and draws such a friend disabled (0x009d7610)."""
+
 def update_friend(name: str, online: bool):
-  """`UPDATEFRIEND` notification: [name, status, mood, ?, ?, ?] (0x00428c60); status 1 is online (0x00b210f0)."""
+  """`UPDATEFRIEND` notification: [name, status, mood, ?, ?, ?] (0x00428c60)."""
   header = GSMessageHeader.from_params(PROPERTY.GS, 1, MESSAGE_TYPE.UPDATEFRIEND, SENDER_RECEIVER.R, SENDER_RECEIVER.P)
   zero = (0).to_bytes(4, 'little')
-  data = [name, (1 if online else 0).to_bytes(4, 'little'), '', zero, zero, '']
+  status = FRIEND_ONLINE if online else FRIEND_OFFLINE
+  data = [name, status.to_bytes(4, 'little'), '', zero, zero, '']
   return Message(None, header=header, dl=List(data))
 
 class StillAliveResponse(GSMResponse):
