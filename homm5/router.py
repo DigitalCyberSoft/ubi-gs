@@ -18,7 +18,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
   res = None
   match req.header.type:
     case gsm.MESSAGE_TYPE.STILLALIVE:
-      pass
+      res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.JOINWAITMODULE:
       res = gsm.JoinWaitModuleResponse(req, WAIT_MODULE)
     case gsm.MESSAGE_TYPE.LOGIN:
