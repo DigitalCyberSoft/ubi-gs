@@ -4,7 +4,7 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import limits
 import ports
-import gsm, pkc, client, h5, accounts, ladder
+import gsm, pkc, client, h5, accounts, ladder, profiles
 
 SERVER_ADDRESS = h5.ENDPOINTS["proxy_wm"]
 """Address of the proxy's wait module service."""
@@ -17,6 +17,8 @@ class ModuleUnavailable(Exception):
 
 MODULES = {
   ladder.QUERY: ladder.query,
+  profiles.GET: profiles.get_data,
+  profiles.SET: profiles.set_data,
 }
 """Module data handlers by code: (client, payload) -> result list ['38'|'39', data]."""
 

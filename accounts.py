@@ -269,3 +269,12 @@ def set_ladder_stats(account: Account, ladder: str, stats: dict[str, int]):
   with _transaction() as conn:
     conn.executemany('INSERT OR REPLACE INTO ladder (account, game, field, value) VALUES (?, ?, ?, ?)',
       [(account.id, ladder, field, int(value)) for field, value in stats.items()])
+# profile data
+
+def profile(account: Account, game: str) -> bytes | None:
+  rows = _query('SELECT data FROM profiles WHERE account = ? AND game = ?', (account.id, game))
+  return bytes(rows[0][0]) if rows else None
+
+def set_profile(account: Account, game: str, data: bytes):
+  with _transaction() as conn:
+    conn.execute('INSERT OR REPLACE INTO profiles (account, game, data) VALUES (?, ?, ?)', (account.id, game, data))
