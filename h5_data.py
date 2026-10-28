@@ -120,6 +120,8 @@ class H5_LocalIP:
 
 class H5_PlayerInfo:
   def __init__(self, buf: bytes = None):
+    self.key: int = None
+    """Id written before the entry in `RoomInfo.player_infos`; `None` numbers the entries from 0."""
     if buf is None:
       self.username = ""
       """idx = 2"""
@@ -615,10 +617,12 @@ class H5_RoomInfo:
           pos += len(field)
 
         player_infos: list[H5_PlayerInfo] = []
-        for _ in range(count):
+        for i in range(count):
           field = H5_Stream(buf[pos:])
           if field.id == 2:
-            player_infos.append(H5_PlayerInfo(field.data))
+            info = H5_PlayerInfo(field.data)
+            info.key = sizes[i]
+            player_infos.append(info)
           else:
             raise ValueError(f"RoomInfo: missing/invalid field - PlayerInfos.PlayerInfo (2)")  
           pos += len(field)
@@ -741,7 +745,7 @@ class H5_RoomInfo:
       data.extend(field.write())
       # either ids (starting at 0), positions or zeroes - idx 1
       field.id = 1
-      field.data = write_u32(some_id)
+      field.data = write_u32(some_id if info.key is None else info.key)
       field.size = len(field.data)
       buf.extend(field.write())
       some_id += 1
