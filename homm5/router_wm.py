@@ -49,7 +49,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
               proxy_id = "1"
             case "ladderquery":
               proxy = PROXY
-              proxy_id = "1"
+              proxy_id = "2"
             case "remotealgorithm":
               raise NotImplementedError(f"Remote algorithm proxy module unsupported")
             case "clanservice":
