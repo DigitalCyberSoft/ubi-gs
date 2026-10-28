@@ -122,5 +122,62 @@ class RobustnessTests(IrcTestCase):
     p.sock.sendall(bytes(msg))
     self.assertTrue(p.alive())
 
+class ProtocolTests(IrcTestCase):
+  """The parts of IRC the game uses."""
+  def test_part_as_the_game_sends_it(self):
+    alice, bob = self.player('alice'), self.player('bob')
+    alice.read()
+    alice.send(f'PART {CHANNEL} :')
+    self.assertTrue(any(l.endswith(f'PART {CHANNEL} :') for l in bob.read()))
+    self.assertFalse(any(' 403 ' in l for l in alice.read()))
+    # alice is no longer in the channel
+    bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1anyone?')
+    self.assertFalse(any('PRIVMSG' in l for l in alice.read()))
+    alice.send(f'PART {CHANNEL} :')
+    self.assertTrue(any(' 442 ' in l for l in alice.read()))
+
+  def test_split_frame(self):
+    p = self.player()
+    data = frame('NICK :alice') + frame('USER HEROES_657d2c2ebadc6a1d +i 0 :alice')
+    p.sock.sendall(data[:3])
+    time.sleep(0.2)
+    p.sock.sendall(data[3:20])
+    time.sleep(0.2)
+    p.sock.sendall(data[20:])
+    self.assertTrue(any(' 001 alice ' in l for l in p.read()))
+
+  def test_dot_in_nick(self):
+    p = self.player('a.b', join=False)
+    p.send('PING :x')
+    lines = p.read()
+    self.assertFalse(any(' 432 ' in l for l in lines))
+    self.assertTrue(p.alive())
+
+  def test_reconnect_takes_over_nick(self):
+    old = self.player('alice')
+    new = self.player('alice')
+    new.send('PING :x')
+    lines = new.read()
+    self.assertFalse(any(' 433 ' in l for l in lines))
+    # the stale connection is closed
+    old.sock.settimeout(2)
+    try:
+      while old.sock.recv(4096):
+        pass
+      closed = True
+    except socket.timeout:
+      closed = False
+    except OSError:
+      closed = True
+    self.assertTrue(closed)
+    # and the new one gets the channel traffic
+    bob = self.player('bob')
+    new.read()
+    bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1hi')
+    new.send(f'JOIN :{CHANNEL}')
+    new.read()
+    bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1hi again')
+    self.assertTrue(any('1hi again' in l for l in new.read()))
+
 if __name__ == '__main__':
   unittest.main()
