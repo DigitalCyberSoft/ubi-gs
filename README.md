@@ -26,14 +26,22 @@ The next sections explain how to run a server for Heroes of Might and Magic V an
 ## Using it with the game
 
 ### Status
-- **Works:** with the lobby work in this fork (`fix-lobby-ping-timeout`), Heroes V 1.60 logs in to "ubi.com", stays in the lobby, and lists rooms and players.
-- **Not yet:** starting a match (#18, #19, #20), friends (#21), ratings (#22) and the profile screen (#23) are in progress.
-- **Remote players:** they need the configurable service address from #2. Until that is merged, the homm5 services listen on and announce `localhost`, so only a game on the server machine itself can connect.
+This guide describes this fork with its open pull requests merged (see the integration PR #35); where a feature comes from one PR, it is named.
+- **Works:** Heroes V 1.60 logs in to "ubi.com" with a per-player account (#43), stays in the lobby, lists rooms and players, and joining a room fills its player slots (#39). Players on other machines can connect (#36).
+- **Not yet:** a match can't be started yet: the server answers the game's start requests (#39), but the host's Start Game button stays disabled, which is still being investigated (#18). Rated results (#20), friends (#21), ratings (#22) and the profile screen (#23) are in progress.
 
 ### 1. The server
 
 1. Install Python 3.11+ and the dependencies (`pip install -r requirements.txt`), ideally in a virtual environment.
-2. Edit [`gsconnect/static/homm5/servers.ini`](gsconnect/static/homm5/servers.ini) and replace every `127.0.0.1` with the server's public IP address or hostname. This file is what tells the game where the services are; `127.0.0.1` only works when the game runs on the server itself.
+2. Decide the address players use, usually nothing to do. The game learns where the services are from [`gsconnect/static/homm5/servers.ini`](gsconnect/static/homm5/servers.ini), and gsconnect fills its `RouterIP0`, `IRCIP0`, `CDKeyServerIP0` and `NATServerIP0` for each request (#36):
+   - `UBIGS_HOST`, if set;
+   - otherwise the local address the HTTP request arrived on, i.e. the address the player reached gsconnect at;
+   - otherwise the addresses in the file.
+
+   The services likewise send the game the address it connected to when they redirect it to another service. So the file doesn't need editing. Set `UBIGS_HOST` to the public IP or hostname (for gsconnect **and** the services) when that local address isn't what players reach:
+   - the server is behind NAT or port forwarding (its local address is a private one);
+   - gsconnect runs behind a reverse proxy (it would see `127.0.0.1`);
+   - gsconnect runs on a different machine from the services.
 3. Start gsconnect. It needs port 80, because the game's URL is hard-coded; see [Running it publicly](#running-it-publicly) for running it without root:
    ```
    python gsconnect/gsconnect.py
@@ -44,7 +52,8 @@ The next sections explain how to run a server for Heroes of Might and Magic V an
    python homm5/launch.py
    ```
    On Windows, `homm5\homm5.bat` opens one window per service instead. `launch.py` works on any OS: it prefixes each service's output with its name, and stops all of them on Ctrl+C or SIGTERM. If a service can't start, it says which one and why, and stops the rest (see [Troubleshooting](#troubleshooting-a-port-is-blocked)).
-   - With the fix for #2, set `UBIGS_HOST` to the public IP or hostname players use (the same address as in `servers.ini`). The services then listen on all interfaces and send the game that address when they redirect it. `UBIGS_BIND` overrides the listening address.
+   - The services listen on all interfaces (`0.0.0.0`); `UBIGS_BIND` narrows that to one address (#36).
+   - Player accounts are stored in `ubigs.db` next to `accounts.py`, or in the file named by `UBIGS_DB` (#43). Keep it with the server and back it up.
 5. Open these ports in the firewall (and forward them, if the server is behind a router):
 
    | Port | Protocol | Service |
@@ -94,9 +103,13 @@ To go back to normal, remove the line.
 
 Only 1.60 has been tested in-game against these services; the expansions are untested past gsinit.
 
-**Logging in:** open Multi Player → ubi.com.
-- Any account name, password and CD key/Online Key are accepted; Ubisoft's key service is gone, so keys can't be checked.
-- Once per-user accounts land (#3), the first login with a name claims it, and later logins under that name need the same password.
+**Logging in:** open Multi Player → ubi.com and type any name and password. There's no registration; the first login creates the account (#43).
+- **Logging in again with the same name and password** gets the same account back (it is also where friends, ratings and profile data will be kept once #21-#23 land).
+- **A taken name:** if the name already belongs to an account with a different password, you get the next free name instead: `name-1`, `name-2`, and so on. Log in again with the same name and password and you get that same `name-k` account back.
+- **Names** are case-insensitive and at most 11 bytes, suffix included; longer names are cut. A name may not be empty or contain spaces or control characters, and the password may not be empty.
+- **Logging in twice:** a second login to the same account (for example after the game crashed) closes the older connection.
+- **Known limitation:** the game keeps the name you typed. If you were given `alice-1`, other players see you as `alice-1`, but your own lobby list still shows you as `alice`.
+- **CD key / Online Key:** any key is accepted. Ubisoft's key service is gone, so keys can't be checked.
 - **Use a throwaway password, never one you use anywhere else.** The game sends it in a form anyone on the network path can read (#15).
 
 ### 3. Players behind NAT
@@ -125,10 +138,12 @@ The services are public by default: they are meant to be reached by players over
     sudo setcap cap_net_bind_service=+ep venv/bin/python3
     ```
   - or, under systemd, use `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the unit;
-  - or run gsconnect on a high port (`GSCONNECT_HOST=127.0.0.1 GSCONNECT_PORT=8080`) behind a reverse proxy that listens on port 80, for example nginx with `location / { proxy_pass http://127.0.0.1:8080; }` (#13).
+  - or run gsconnect on a high port (`GSCONNECT_HOST=127.0.0.1 GSCONNECT_PORT=8080`) behind a reverse proxy that listens on port 80, for example nginx with `location / { proxy_pass http://127.0.0.1:8080; }` (#13). Set `UBIGS_HOST` to the public address in that case: behind the proxy gsconnect only sees `127.0.0.1` and would hand that to players.
 - **Logs.** The services print every request. Passwords and CD-key data are redacted (#4), but logs still hold player names, IP addresses and chat. Rotate them, keep them private, and redact them before sharing.
-- **Accounts.**
-  - With per-user accounts (#3), the first login claims a name, and the server stores a salted scrypt hash of the password, never the password itself.
+- **Accounts** (#43).
+  - The first login with a name creates the account; a taken name with a different password gets `name-1`, `name-2`, …, so nobody is locked out and nobody can log in to someone else's account without their password.
+  - Passwords are stored only as salted scrypt hashes, in the SQLite file `ubigs.db` (or `UBIGS_DB`). Keep that file private and backed up.
+  - `UBIGS_DB=:memory:` keeps accounts in memory only. That works only when all the services run in one process, not with `launch.py` or `homm5.bat`, which start one process per service.
   - The game still sends the password effectively in clear (#15), so the hash protects the stored file, not the login.
   - CD keys are never checked.
 
