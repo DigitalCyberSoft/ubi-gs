@@ -1,4 +1,5 @@
 from copy import copy
+from ctypes import c_int32
 from enum import Enum
 import blowfish, gsxor, pkc, client, utils
 from client import TcpClient
@@ -611,7 +612,7 @@ class NatResponse(GSMResponse):
   """Response to `NAT` messages.
 
   `PORT_ID` tells the game where to send its NAT pings and the 4-byte id to put in them (`ip`), `ADDRESS` is the game's public address as seen in its pings.
-  The game reads `ip` as a host-order integer (127.0.0.1 is 0x7F000001)."""
+  The game reads `ip` as a host-order integer (127.0.0.1 is 0x7F000001) with `atoi`, so it is sent signed to keep the upper half of the range."""
   def __init__(self, req: Message, subtype: NAT_MSG, ip: int, port: int):
     if req.header.type != MESSAGE_TYPE.NAT:
       raise TypeError(f"NatResponse constructed from {req.header.type} request.")
@@ -619,7 +620,7 @@ class NatResponse(GSMResponse):
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.NAT
     socketId = req.dl.lst[1][0]
-    self.dl = List([str(subtype.value), [socketId, str(ip), str(port)]])
+    self.dl = List([str(subtype.value), [socketId, str(c_int32(ip).value), str(port)]])
 
 class GetGroupInfoResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_INFO_GET` messages.

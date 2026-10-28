@@ -77,6 +77,21 @@ class NatTests(unittest.TestCase):
     self.assertEqual(res.header.ack, 1)
     self.assertEqual(res.header.checksum, make_checksum(bytes(res), CHECKSUM_INIT))
 
+  def test_ping_id_round_trip(self):
+    req = gsm.Message(None, in_buf=make_nat_request('1'))
+    for ping_id in [1, 0x7FFFFFFF, 0x80000000, 0xDEADBEEF, 0xFFFFFFFF]:
+      msg = gsm.NatResponse(req, gsm.NAT_MSG.PORT_ID, ping_id, 7781)
+      # the game parses with atoi into an int and sends it back with htonl
+      parsed = int(msg.dl.lst[1][1])
+      self.assertTrue(-0x80000000 <= parsed <= 0x7FFFFFFF)
+      ping = struct.pack('>i', parsed)
+      self.assertEqual(utils.read_u32_be(ping), ping_id)
+
+  def test_address_above_127(self):
+    req = gsm.Message(None, in_buf=make_nat_request('1'))
+    msg = gsm.NatResponse(req, gsm.NAT_MSG.ADDRESS, utils.ipv4_to_u32_be('192.168.0.41'), 8888)
+    self.assertEqual(msg.dl.lst, ['3', ['1', str(0xC0A80029 - 0x100000000), '8888']])
+
   def test_find_by_ping(self):
     clt = make_client()
     clt.ping_id = 7

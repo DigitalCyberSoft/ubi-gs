@@ -1,4 +1,4 @@
-import socket, sys, os
+import secrets, socket, sys, os
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
@@ -10,8 +10,12 @@ SERVER_ADDRESS = h5.ENDPOINTS["nat"]
 CLIENTS: list[client.NatClient] = []
 """Global list of connected game clients."""
 
-next_ping_id = 1
-"""Global NAT ping id assignment counter."""
+def new_ping_id(clients: list[client.NatClient]):
+  """Returns a random nonzero 32-bit NAT ping id not used by another client."""
+  while True:
+    ping_id = secrets.randbits(32)
+    if ping_id != 0 and client.NatClient.find_by_ping(ping_id, clients) is None:
+      return ping_id
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(SERVER_ADDRESS)
@@ -52,8 +56,7 @@ while True:
     elif req.segment.msg:
       clt.nat_req = req.segment.msg
       if clt.ping_id is None:
-        clt.ping_id = next_ping_id
-        next_ping_id += 1
+        clt.ping_id = new_ping_id(CLIENTS)
       msg = gsm.NatResponse(clt.nat_req, gsm.NAT_MSG.PORT_ID, clt.ping_id, SERVER_ADDRESS[1])
       res = srp.SRPResponse(req, clt, msg)
       sock.sendto(bytes(res), address)
