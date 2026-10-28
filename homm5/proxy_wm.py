@@ -2,7 +2,7 @@ import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import gsm, pkc, client, h5, accounts
+import gsm, pkc, client, h5, accounts, profiles
 
 SERVER_ADDRESS = h5.ENDPOINTS["proxy_wm"]
 """Address of the proxy's wait module service."""
@@ -12,6 +12,23 @@ CLIENTS: list[client.TcpClient] = []
 
 class ModuleUnavailable(Exception):
   """A proxy module request this server has no service for."""
+
+MODULES = {
+  profiles.GET: profiles.get_data,
+  profiles.SET: profiles.set_data,
+}
+"""Module data handlers by code: (client, payload) -> result list ['38'|'39', data]."""
+
+def module_response(clt: client.TcpClient, req: gsm.Message):
+  """Answers module data `[code, seq, payload]` on the same connection: [code, seq, result] (0x0043f790).
+  The game matches the reply by `seq`."""
+  code, seq, payload = req.dl.lst[0], req.dl.lst[1], req.dl.lst[2]
+  handler = MODULES.get(code)
+  if handler is None:
+    raise ModuleUnavailable(code)
+  res = gsm.GSMResponse(req)
+  res.dl = gsm.List([code, seq, handler(clt, payload)])
+  return res
 
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
@@ -24,9 +41,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       clt.username = accounts.account_name(req.dl.lst[0], clt.addr[0])
       res = gsm.ProxyLoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.PROXY_HANDLER:
-      # module requests (e.g. ladder queries, 1281): closing the module's connection fails them,
-      # then the game carries on (it sends its LOBBY_MSG.SET_PLAYER_INFO without ladder data)
-      raise ModuleUnavailable(req.dl.lst[0])
+      # module data; for others, closing the module's connection fails them and the game carries on
+      res = module_response(clt, req)
     case gsm.MESSAGE_TYPE.KEY_EXCHANGE:
       match req.dl.lst[0]:
         case '1':

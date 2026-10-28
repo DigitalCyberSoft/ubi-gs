@@ -236,3 +236,13 @@ def account_name(typed: str, ip: str) -> str:
   """The account name of the game at `ip` that logged in as `typed`; `typed` if there's no session."""
   account = session(typed, ip)
   return account.name if account else typed
+
+# profile data
+
+def profile(account: Account, game: str) -> bytes | None:
+  rows = _query('SELECT data FROM profiles WHERE account = ? AND game = ?', (account.id, game))
+  return bytes(rows[0][0]) if rows else None
+
+def set_profile(account: Account, game: str, data: bytes):
+  with _transaction() as conn:
+    conn.execute('INSERT OR REPLACE INTO profiles (account, game, data) VALUES (?, ?, ?)', (account.id, game, data))
