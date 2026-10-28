@@ -2,6 +2,7 @@ import socket, sys, os
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import ports
 import cdkm, h5
 
 NOTIFS = [cdkm.REQUEST_TYPE.DISCONNECT_USER, cdkm.REQUEST_TYPE.STILL_ALIVE]
@@ -31,7 +32,7 @@ def handle_packet(data: bytes):
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  sock.bind(SERVER_ADDRESS)
+  ports.bind(sock, SERVER_ADDRESS, "cdkey")
   print(f"CD Key server is listening on port {SERVER_ADDRESS[1]}")
 
   while True:

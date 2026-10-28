@@ -2,6 +2,7 @@ import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import ports
 import gsm, client, h5
 from group import Room, LSM, MemberInfo, PLAYER_STATUS
 from h5_data import H5_Room, H5_RoomInfo, H5_Serializer
@@ -264,8 +265,8 @@ def handle_client(clt: client.TcpClient):
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  ports.bind(sock, SERVER_ADDRESS, "lobby")
   print(f"Lobby server is listening on port {SERVER_ADDRESS[1]}")
-  sock.bind(SERVER_ADDRESS)
   sock.listen(5)
     
   while True:

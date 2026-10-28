@@ -2,6 +2,7 @@ import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import ports
 import gsm, pkc, client, h5
 
 SERVER_ADDRESS = h5.ENDPOINTS["router"]
@@ -68,8 +69,8 @@ def handle_client(clt: client.TcpClient):
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  ports.bind(sock, SERVER_ADDRESS, "router")
   print(f"Router service is listening on port {SERVER_ADDRESS[1]}")
-  sock.bind(SERVER_ADDRESS)
   sock.listen(5)
     
   while True:

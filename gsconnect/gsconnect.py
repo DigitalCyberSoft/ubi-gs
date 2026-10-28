@@ -1,4 +1,4 @@
-import argparse, os, re
+import argparse, os, re, sys
 from flask import Flask, request, send_from_directory, abort, Response
 
 app = Flask(__name__)
@@ -75,4 +75,8 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
+    # a clear message and exit code if the port can't be opened (Flask would print a bare error)
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    import ports
+    ports.check_bind('gsconnect', 'tcp', (args.host, args.port))
     app.run(host=args.host, port=args.port, debug=args.debug)

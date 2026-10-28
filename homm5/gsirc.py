@@ -11,7 +11,7 @@ from jaraco.stream import buffer
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import ircm, h5
+import ircm, h5, ports, firewall
 
 SERVER_ADDRESS = h5.ENDPOINTS["irc"]
 """Address of the IRC service."""
@@ -430,7 +430,8 @@ class IRCClient(socketserver.BaseRequestHandler):
 class IRCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
   """Server instance."""
   daemon_threads = True
-  allow_reuse_address = True
+  # quick restarts on POSIX; on Windows the option would let a second server share the port
+  allow_reuse_address = os.name != 'nt'
 
   channels: typing.Dict[str, IRCChannel] = {}
   "Existing channels by channel name"
@@ -470,9 +471,13 @@ def get_args():
 def main():
   options = get_args()
   jaraco.logging.setup(options)
+  bind_address = options.listen_address, options.listen_port
   try:
-    bind_address = options.listen_address, options.listen_port
     ircserver = IRCServer(bind_address, IRCClient)
+  except OSError as err:
+    ports.fail('irc', 'tcp', bind_address, err)
+  firewall.warn_unless_launched([('irc', 'tcp', options.listen_port)])
+  try:
     _tmpl = '\tIRC server is listening on port {listen_port}'
     log.info(_tmpl.format(**vars(options)))
     ircserver.serve_forever()
