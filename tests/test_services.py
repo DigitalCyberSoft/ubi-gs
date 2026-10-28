@@ -1,5 +1,7 @@
 import sys, os, socket, threading, unittest
 # relative module import stuff
+# accounts in memory, no database file from the tests
+os.environ.setdefault('UBIGS_DB', ':memory:')
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))

@@ -3,7 +3,7 @@ import sys, os, tempfile, threading, multiprocessing, sqlite3, unittest
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))
-import accounts, client, gsm
+import accounts, client, gsm, lobby
 from data import List
 import router, router_wm
 
@@ -152,6 +152,7 @@ class MemoryTests(unittest.TestCase):
     self.assertEqual(accounts.find('alice-1').name, 'alice-1')
 
   def test_memory_env(self):
+    previous = os.environ.get('UBIGS_DB')
     os.environ['UBIGS_DB'] = ':memory:'
     try:
       accounts.configure(None)
@@ -161,7 +162,10 @@ class MemoryTests(unittest.TestCase):
       # gone after a restart
       self.assertIsNone(accounts.find('dave'))
     finally:
-      del os.environ['UBIGS_DB']
+      if previous is None:
+        del os.environ['UBIGS_DB']
+      else:
+        os.environ['UBIGS_DB'] = previous
 
 def message(msg_type: gsm.MESSAGE_TYPE, data: list):
   header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, msg_type, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
@@ -198,6 +202,27 @@ class RouterLoginTests(AccountTestCase):
     _, res = self.login('10.0.0.2', 'a b', 'one')
     self.assertEqual(res.header.type, gsm.MESSAGE_TYPE.GSFAIL)
     self.assertEqual(res.dl.lst, [b'f', [(2).to_bytes(4, 'little')]])
+
+  def test_lobby_names(self):
+    self.login('10.0.0.2', 'alice', 'one')
+    self.login('10.0.0.3', 'alice', 'two')
+    lobby.g_clients.clear()
+    first = client.TcpClient((FakeConn(), ('10.0.0.2', 50002)))
+    second = client.TcpClient((FakeConn(), ('10.0.0.3', 50002)))
+    for clt in [first, second]:
+      lobby.g_clients.append(clt)
+      lobby.handle_req(clt, message(gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN, ['alice', '1', clt.addr[0], '255.255.255.0', '0']))
+      lobby.handle_req(clt, message(gsm.MESSAGE_TYPE.LOBBY_MSG, ['23', ['1', '', '384']]))
+    self.assertEqual([first.username, second.username], ['alice', 'alice-1'])
+    first.conn.sent.clear()
+    lobby.send_group_info(first, 1, 384)
+    members = gsm.Message(None, in_buf=first.conn.sent[-1]).dl.lst[1][4]
+    self.assertEqual([m[0] for m in members], ['alice', 'alice-1'])
+    # a player knows itself by the typed name
+    lobby.send_group_info(second, 1, 384)
+    members = gsm.Message(None, in_buf=second.conn.sent[-1]).dl.lst[1][4]
+    self.assertEqual([m[0] for m in members], ['alice', 'alice'])
+    lobby.g_clients.clear()
 
   def test_second_login_closes_older(self):
     old, _ = self.login('10.0.0.2', 'alice', 'one')

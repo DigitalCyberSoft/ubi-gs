@@ -2,7 +2,7 @@ import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import gsm, client, h5
+import gsm, client, h5, accounts
 from group import Room, LSM, MemberInfo, PLAYER_STATUS
 from h5_data import H5_Room, H5_RoomInfo, H5_Serializer
 
@@ -49,9 +49,15 @@ def room_list(room: H5_Room):
   room.gs_room.group_info = H5_Serializer().serialize_roominfo(room.room_info)
   return room.gs_room.to_list()
 
-def member_info(member: client.TcpClient, group_id: int):
-  """Member data of the client in the group."""
-  info = MemberInfo(member.username, str(group_id))
+def shown_name(member: client.TcpClient, to: client.TcpClient = None):
+  """The member's name for a player: the account name, but the typed one for the player itself (the game knows itself by it)."""
+  if member is to and member.typed_name:
+    return member.typed_name
+  return member.username
+
+def member_info(member: client.TcpClient, group_id: int, to: client.TcpClient = None):
+  """Member data of the client in the group, for the player `to`."""
+  info = MemberInfo(shown_name(member, to), str(group_id))
   info.is_visitor = member.is_visitor
   info.ip_addr = member.addr[0]
   info.alt_ip_addr = member.local_ip or member.addr[0]
@@ -59,7 +65,8 @@ def member_info(member: client.TcpClient, group_id: int):
   # the game sets it only after a ladder query; until then use its entry in the room info
   room = find_room(group_id)
   if not info.player_info and room is not None:
-    entry = next((p for p in room.room_info.player_infos if p.username == member.username), None)
+    names = {member.username, member.typed_name}
+    entry = next((p for p in room.room_info.player_infos if p.username in names), None)
     if entry is not None:
       info.player_info = H5_Serializer().serialize_playerinfo(entry)
   if find_room(group_id) is not None:
@@ -79,7 +86,7 @@ def send_group_info(clt: client.TcpClient, group_id: int, flags: int):
     data = []
     children = [room_list(r) for r in g_rooms if r.gs_room.parent_id == group_id]
     members = lobby_members(group_id)
-  member_lists = [member_info(m, group_id).to_list() for m in members]
+  member_lists = [member_info(m, group_id, clt).to_list() for m in members]
   send_notif(clt, gsm.LOBBY_MSG.GROUP_INFO, [str(group_id), str(flags), data, children, member_lists])
 
 def send_room_update(room: H5_Room, exclude: client.TcpClient = None):
@@ -142,10 +149,13 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
     case gsm.MESSAGE_TYPE.STILLALIVE:
       res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.LOGINWAITMODULE:
-      clt.username = req.dl.lst[0]
+      clt.typed_name = req.dl.lst[0]
+      clt.username = accounts.account_name(clt.typed_name, clt.addr[0])
       res = gsm.LoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN:
-      clt.username = req.dl.lst[0]
+      # the typed name; other players see the account name
+      clt.typed_name = req.dl.lst[0]
+      clt.username = accounts.account_name(clt.typed_name, clt.addr[0])
       # username, lobby server id, local ip, netmask
       clt.local_ip = req.dl.lst[2]
       res = gsm.LobbyServerLoginResponse(req)
