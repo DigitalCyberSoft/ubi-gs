@@ -265,6 +265,16 @@ def ladder_stats(account: Account, ladder: str) -> dict[str, int]:
   rows = _query('SELECT field, value FROM ladder WHERE account = ? AND game = ?', (account.id, ladder))
   return dict(rows)
 
+def update_ladder(ladder: str, ids: list[int], update):
+  """Reads the stored fields of the accounts and writes what `update({id: {field: value}})` returns
+  ({id: {field: value}}), in one transaction, so results of concurrent matches can't interleave."""
+  with _transaction() as conn:
+    stored = {aid: dict(conn.execute('SELECT field, value FROM ladder WHERE account = ? AND game = ?', (aid, ladder)).fetchall())
+      for aid in ids}
+    for aid, stats in update(stored).items():
+      conn.executemany('INSERT OR REPLACE INTO ladder (account, game, field, value) VALUES (?, ?, ?, ?)',
+        [(aid, ladder, field, int(value)) for field, value in stats.items()])
+
 def set_ladder_stats(account: Account, ladder: str, stats: dict[str, int]):
   with _transaction() as conn:
     conn.executemany('INSERT OR REPLACE INTO ladder (account, game, field, value) VALUES (?, ?, ?, ?)',

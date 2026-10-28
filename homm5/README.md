@@ -27,7 +27,8 @@ setvar net_ubi_cdkey_port = 42501
 - Friends: add and remove them in the lobby, see who is online. The list is kept across restarts.
 - Ratings in the player list (1500 to start with).
 - Creating, joining and starting games, unrated (Casual) and rated (Ranked), and playing them on the map. A rated game's results go back to the players when it ends.
-- Not yet: rated results don't change the ratings, and the Profile screen shows the game's "not played for rating" message because no profile is ever stored.
+- Rated results update the ladder: Elo ratings (from 1500) and the per-race statistics, from the values the games submit (#61). The game reads its own rating for the player list at login, so a new rating shows there after the next login.
+- Not yet: the Profile screen shows the game's "not played for rating" message because no profile is ever stored (#50).
 
 ## Starting a game
 
