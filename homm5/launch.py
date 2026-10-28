@@ -40,6 +40,14 @@ def check_firewall():
   except Exception as err:
     print(f'launch: could not check the firewall: {err!r}', flush=True)
 
+def ignore_signals():
+  signal.signal(signal.SIGINT, signal.SIG_IGN)
+  signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+def interrupted(*_):
+  ignore_signals()
+  raise KeyboardInterrupt
+
 def main(services: list[str] = SERVICES, firewall_check=check_firewall):
   procs, relays, last = {}, {}, {}
   width = max(len(s) for s in services)
@@ -49,8 +57,10 @@ def main(services: list[str] = SERVICES, firewall_check=check_firewall):
       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
     relays[name] = threading.Thread(target=relay, args=(name, procs[name], last, width), daemon=True)
     relays[name].start()
-  # SIGTERM (e.g. systemd, docker stop) stops everything like Ctrl+C
-  signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
+  # Ctrl+C or SIGTERM (e.g. systemd, docker stop) stops everything, once: further signals
+  # (a terminal sends Ctrl+C to the whole process group) must not cut the shutdown short
+  signal.signal(signal.SIGINT, interrupted)
+  signal.signal(signal.SIGTERM, interrupted)
   started = time.monotonic()
   checked = False
   try:
@@ -71,7 +81,11 @@ def main(services: list[str] = SERVICES, firewall_check=check_firewall):
   except KeyboardInterrupt:
     return 0
   finally:
+    ignore_signals()
     stop(procs)
+    # let the output threads finish while the interpreter is still running
+    for thread in relays.values():
+      thread.join(timeout=2)
 
 if __name__ == '__main__':
   sys.exit(main())
