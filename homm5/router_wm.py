@@ -52,10 +52,10 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           module = req.dl.lst[1][0]
           match module:
             case "persistantdata":
-              proxy = PROXY
+              proxy = h5.advertised(PROXY, clt.conn)
               proxy_id = "1"
             case "ladderquery":
-              proxy = PROXY
+              proxy = h5.advertised(PROXY, clt.conn)
               proxy_id = "2"
             case "remotealgorithm":
               raise NotImplementedError(f"Remote algorithm proxy module unsupported")
@@ -66,12 +66,12 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           res = gsm.ProxyHandlerResponse(req, proxy, proxy_id)
         else:
           # proxy address doesnt matter here
-          res = gsm.ProxyHandlerResponse(req, PROXY)
+          res = gsm.ProxyHandlerResponse(req, h5.advertised(PROXY, clt.conn))
     case gsm.MESSAGE_TYPE.LOBBY_MSG:
       subtype = gsm.LOBBY_MSG(int(req.dl.lst[0]))
       match subtype:
         case gsm.LOBBY_MSG.JOIN_SERVER:
-          res = gsm.JoinLobbyServerResponse(req, LOBBY_SERVER)
+          res = gsm.JoinLobbyServerResponse(req, h5.advertised(LOBBY_SERVER, clt.conn))
         case gsm.LOBBY_MSG.LOGIN:
           game_name = req.dl.lst[1][0]
           res = gsm.LobbyMsgResponse(req)

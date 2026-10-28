@@ -55,6 +55,15 @@ def get(php_filename: str) -> Response:
             case _:
                 print('Unknown game id')
                 return 'Unknown game id', 400
+        host = services_host()
+        if game == 'HOMM5' and host:
+            # the game services' address: wherever this request arrived, as the services do (homm5/h5.py)
+            try:
+                with open(os.path.join(app.config[game], ini_file), encoding='ascii') as file:
+                    ini = re.sub(r'(?m)^(\w+IP\d+)=.*$', lambda m: f'{m.group(1)}={host}', file.read())
+            except FileNotFoundError:
+                abort(404)
+            return Response(ini, mimetype='application/octet-stream', headers={'Content-Disposition': f'attachment; filename={ini_file}'})
         try:
             return send_from_directory(directory=app.config[game], path=ini_file, as_attachment=True)
         except FileNotFoundError:
@@ -62,6 +71,19 @@ def get(php_filename: str) -> Response:
     else:
         print(f'Unknown request for {php_filename}')
         return 'Unknown request', 400
+
+def services_host():
+    """UBIGS_HOST, else the local address the request arrived on; None keeps the file's addresses."""
+    host = os.environ.get('UBIGS_HOST')
+    if host:
+        return host
+    sock = request.environ.get('werkzeug.socket')
+    if sock is not None:
+        try:
+            return sock.getsockname()[0]
+        except OSError:
+            pass
+    return None
 
 def get_args():
     parser = argparse.ArgumentParser(description='gsconnect.ubisoft.com web service')
