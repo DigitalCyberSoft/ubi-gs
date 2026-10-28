@@ -2,6 +2,7 @@ import secrets, socket, sys, os, time
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import ports
 import srp, client, utils, gsm, h5
 
 SERVER_ADDRESS = h5.ENDPOINTS["nat"]
@@ -103,7 +104,7 @@ def remove_silent(now: float):
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  sock.bind(SERVER_ADDRESS)
+  ports.bind(sock, SERVER_ADDRESS, "nat")
   sock.settimeout(TICK)
   print(f"GSNAT server is listening on port {SERVER_ADDRESS[1]}")
 

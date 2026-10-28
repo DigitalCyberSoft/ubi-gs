@@ -43,7 +43,7 @@ The next sections explain how to run a server for Heroes of Might and Magic V an
    ```
    python homm5/launch.py
    ```
-   On Windows, `homm5\homm5.bat` opens one window per service instead. `launch.py` works on any OS: it prefixes each service's output with its name, and stops all of them on Ctrl+C or SIGTERM.
+   On Windows, `homm5\homm5.bat` opens one window per service instead. `launch.py` works on any OS: it prefixes each service's output with its name, and stops all of them on Ctrl+C or SIGTERM. If a service can't start, it says which one and why, and stops the rest (see [Troubleshooting](#troubleshooting-a-port-is-blocked)).
    - With the fix for #2, set `UBIGS_HOST` to the public IP or hostname players use (the same address as in `servers.ini`). The services then listen on all interfaces and send the game that address when they redirect it. `UBIGS_BIND` overrides the listening address.
 5. Open these ports in the firewall (and forward them, if the server is behind a router):
 
@@ -136,6 +136,44 @@ The services are public by default: they are meant to be reached by players over
 - Use a throwaway password, never a real one. The game's protocol from 2006 has no real encryption: keyless XOR, Blowfish keys shared by every copy of the game, RSA-512 with e=3 and no TLS (#15).
 - Other players see your IP address. The lobby shares members' addresses, and peer-to-peer matches need them (#12).
 - Only join servers you trust. The game's network code trusts the server, and a hostile server could crash or corrupt the game client (#16, #7).
+
+## Troubleshooting: a port is blocked
+
+**A service won't start.** If a service can't open its port, it prints one line naming the service, the protocol and port, the reason and the fix, then exits with code 2. `homm5/launch.py` repeats that line, stops the other services and exits with the same code, so a server never runs with a service missing.
+
+- **"another program is already using it"**: another program, or another copy of the server, holds the port. The message names the program when it can. To find it:
+  - Linux: `sudo ss -ltnp 'sport = :7777'` (TCP) or `sudo ss -lunp 'sport = :7780'` (UDP)
+  - macOS: `sudo lsof -nP -i TCP:7777`
+  - Windows: `netstat -ano -p TCP | findstr :7777`, then `tasklist /FI "PID eq <pid>"`
+- **Linux, "ports below 1024 need root"** (gsconnect on port 80): don't run the server as root. Use one of the port 80 options in [Running it publicly](#running-it-publicly): `setcap` on a `venv --copies` interpreter, systemd `AmbientCapabilities`, or a reverse proxy.
+- **Windows, "Windows refused access"** (error 10013): this is the most common Windows problem.
+  - **Port 80** is often held by **HTTP.sys**, which `netstat` shows as the "System" process (PID 4). It is used by IIS, the World Wide Web Publishing Service, and other HTTP.sys users. Check with:
+    ```
+    netsh http show servicestate
+    ```
+    Stop the service that uses it (for IIS: `net stop w3svc` as administrator), or run gsconnect on another machine.
+  - **Any port** can fall in a range reserved by Hyper-V, WSL or Docker. Check with:
+    ```
+    netsh int ipv4 show excludedportrange protocol=tcp
+    netsh int ipv4 show excludedportrange protocol=udp
+    ```
+    The reserved ranges change at boot. Running `net stop winnat` and then `net start winnat` as administrator usually frees them.
+- **"the address … is not on this machine"**: the listening address (`--host`, `GSCONNECT_HOST` or the services' bind address) isn't one of this machine's addresses. Use `0.0.0.0`.
+
+**The server runs, but players can't connect.** Binding can work while the host firewall still drops incoming traffic. After starting, the server checks the firewall (best effort, without changing anything):
+
+- **Windows:** it reads the Windows Defender Firewall rules (`netsh advfirewall firewall show rule name=all dir=in verbose`).
+  - If no enabled inbound rule allows a port, or one blocks it, it prints a prominent warning. Windows creates a blocking rule for `python.exe` when its "allow access" prompt is cancelled.
+  - The warning lists the ports and the commands to open them. Run those as administrator; for all ports they are:
+    ```
+    netsh advfirewall firewall add rule name="ubi-gs TCP" dir=in action=allow protocol=TCP localport=80,7777,7779,7782,7783,7784,7785
+    netsh advfirewall firewall add rule name="ubi-gs UDP" dir=in action=allow protocol=UDP localport=7780,7781
+    ```
+- **Linux:** if firewalld or ufw is active and the ports aren't open, it prints a one-line hint, for example:
+  - `sudo firewall-cmd --permanent --add-port=7777/tcp … && sudo firewall-cmd --reload`
+  - `sudo ufw allow 7777/tcp`
+
+The check is a warning only; the server keeps running. A router in front of the server still needs the same ports forwarded to it.
 
 ## Disclaimers
 

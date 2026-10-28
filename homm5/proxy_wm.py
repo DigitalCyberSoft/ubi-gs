@@ -3,6 +3,7 @@ import socket, sys, os, threading
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import limits
+import ports
 import gsm, pkc, client, h5
 
 SERVER_ADDRESS = h5.ENDPOINTS["proxy_wm"]
@@ -84,8 +85,8 @@ def handle_client(clt: client.TcpClient):
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  ports.bind(sock, SERVER_ADDRESS, "proxy_wm")
   print(f"Proxy's wait module is listening on port {SERVER_ADDRESS[1]}")
-  sock.bind(SERVER_ADDRESS)
   sock.listen(5)
     
   while True:
