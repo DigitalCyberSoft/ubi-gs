@@ -3,7 +3,7 @@ This is a modified version of https://github.com/jaraco/irc/blob/main/irc/server
 Adjusted for Ubi's GameService IRC implementation.
 """
 import sys, os
-import argparse, errno, logging, re, select, socketserver, typing
+import argparse, errno, logging, re, select, socket, socketserver, typing
 from irc.client import NickMask
 from irc.events import codes
 import jaraco.logging
@@ -11,12 +11,40 @@ from jaraco.stream import buffer
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import ircm, h5
+import ircm, h5, utils
 
 SERVER_ADDRESS = h5.ENDPOINTS["irc"]
 """Address of the IRC service."""
 
 log = logging.getLogger(__name__)
+
+CHAT_FIELDS = 7
+"""Fields of the game's chat payload: `name%color%size%n%n%font%text` (e.g. `alice%16777215%9%0%0%Arial%2alice has joined the game`)."""
+
+SYSTEM_LINE = '2'
+"""Leading type digit of the game's own announcements, e.g. `2alice has joined the game`."""
+
+def sanitize_chat(nick: str, payload: str):
+  """
+  Returns the chat payload as it may be relayed from `nick`, or None to drop it.
+  The game shows the name and formatting from the payload, not the IRC nick, so the name is forced to the sender's,
+  the formatting fields must be plain numbers and a font name, and announcements must be about the sender.
+  """
+  if payload.startswith(':'):
+    payload = payload[1:]
+  fields = payload.split('%', CHAT_FIELDS - 1)
+  if len(fields) != CHAT_FIELDS:
+    return None
+  name, color, size, n1, n2, font, text = fields
+  if not all(re.fullmatch(r'[0-9]{1,10}', f) for f in [color, size, n1, n2]):
+    return None
+  if not re.fullmatch(r'[A-Za-z0-9 _\-]{1,32}', font):
+    return None
+  # control characters could end the line or confuse the game's text renderer
+  text = re.sub(r'[\x00-\x1f\x7f]', '', text)
+  if text.startswith(SYSTEM_LINE) and not text[1:].startswith(f'{nick} '):
+    return None
+  return ':' + '%'.join([nick, color, size, n1, n2, font, text])
 
 class IRCError(Exception):
   """Exception thrown by IRC command handlers to notify client of a server/client error."""
@@ -60,6 +88,7 @@ class IRCClient(socketserver.BaseRequestHandler):
     self.nick = None  # Client's currently registered nickname
     self.send_queue = []  # Messages to send to client (strings)
     self.channels = {}  # Channels the client is in
+    self.pending = b''  # Received bytes of an incomplete frame
 
     super().__init__(request, client_address, server)
 
@@ -99,24 +128,25 @@ class IRCClient(socketserver.BaseRequestHandler):
 
     if not data:
       raise self.Disconnect()
-    size = len(data)
-    if size > ircm.IRCM_HEADER_SIZE:
-      # decryption
-      msg = ircm.IRCMessage(data)
-      # bundled
-      if size > ircm.IRCM_HEADER_SIZE + msg.size:
-        bundle = ircm.IRCMessageBundle(msg, data[ircm.IRCM_HEADER_SIZE + msg.size:])
-        print(bundle)
-        for m in bundle.msgs:
-          self._handle_lines(m)
-      # single message
-      else:
-        self._handle_lines(msg)
+    # frames (u16be size + Blowfish payload) can be split across reads or share one;
+    # a frame is at most 2 + 0xFFFF bytes, so `pending` stays below that
+    self.pending += data
+    while len(self.pending) >= ircm.IRCM_HEADER_SIZE:
+      end = ircm.IRCM_HEADER_SIZE + utils.read_u16_be(self.pending[:ircm.IRCM_HEADER_SIZE])
+      if len(self.pending) < end:
+        break
+      frame, self.pending = self.pending[:end], self.pending[end:]
+      try:
+        msg = ircm.IRCMessage(frame)
+      except Exception as err:
+        log.warning(f'bad frame from {self.client_ident()}: {err!r}')
+        continue
+      self._handle_lines(msg)
 
   def _handle_lines(self, msg: ircm.IRCMessage):
     self.buffer.feed(msg.payload)
     for line in self.buffer:
-      line = line.decode('utf-8')
+      line = line.decode('utf-8', errors='replace')
       print(f'req: {line}')
       self._handle_line(line)
 
@@ -133,16 +163,12 @@ class IRCClient(socketserver.BaseRequestHandler):
           'unknowncommand', f'{command} :Unknown command'
         )
       response = handler(params)
-    except AttributeError as e:
-      log.error(str(e))
-      raise
     except IRCError as e:
       response = f':{self.server.servername} {e.code} {e.value}'
       log.warning(response)
     except Exception as e:
-      response = f':{self.server.servername} ERROR {e!r}'
-      log.error(response)
-      raise
+      # a bad line must not end the client's connection
+      log.error(f'error handling {line!r} from {self.client_ident()}: {e!r}')
 
     if response:
       self._send(response)
@@ -162,21 +188,28 @@ class IRCClient(socketserver.BaseRequestHandler):
 
   def handle_nick(self, params: str):
     """Handle the initial setting of the user's nickname and nick changes."""
-    nick = params
-    if nick[0] == ':':
+    nick = params.strip()
+    if nick.startswith(':'):
       nick = nick[1:]
+    if not nick:
+      raise IRCError.from_name('nonicknamegiven', ':No nickname given')
 
     # Valid nickname?
-    if re.search(r'[^a-zA-Z0-9\-\[\]\'`^{}_]', nick):
+    if re.search(r'[^a-zA-Z0-9\-\[\]\'`^{}_.]', nick):
       raise IRCError.from_name('erroneusnickname', f':{nick}')
 
     if self.server.clients.get(nick, None) == self:
       # Already registered to user
       return
 
-    if nick in self.server.clients:
-      # Someone else is using the nick
-      raise IRCError.from_name('nicknameinuse', f'NICK :{nick}')
+    holder = self.server.clients.get(nick)
+    if holder is not None:
+      if holder.host[0] != self.host[0]:
+        # Someone else is using the nick
+        raise IRCError.from_name('nicknameinuse', f'NICK :{nick}')
+      # the same player reconnecting (game restart, dropped link): the old connection is stale
+      log.info(f'{nick} reconnected from {self.host[0]}, dropping the old connection')
+      holder.drop()
 
     if not self.nick:
       # New connection and nick is available; register and send welcome and MOTD.
@@ -237,9 +270,10 @@ class IRCClient(socketserver.BaseRequestHandler):
     channel_names = params.split(' ', 1)[0]  # Ignore keys
     for channel_name in channel_names.split(','):
       r_channel_name = channel_name.strip()
-      
-      if r_channel_name[0] == ':':
+      if r_channel_name.startswith(':'):
         r_channel_name = r_channel_name[1:]
+      if not r_channel_name:
+        raise IRCError.from_name('needmoreparams', 'JOIN :Not enough parameters')
 
       # Valid channel name?
       if not re.match('^#([a-zA-Z0-9_\.])+$', r_channel_name):
@@ -284,10 +318,16 @@ class IRCClient(socketserver.BaseRequestHandler):
   def _send_msg(self, cmd: str, params: str):
     """A generic message handler (e.g. `PRIVMSG` and `NOTICE`)."""
     target, sep, msg = params.partition(' ')
-    if not msg:
+    if not target or not msg:
       raise IRCError.from_name('needmoreparams', cmd + ' :Not enough parameters')
+    if not self.nick:
+      raise IRCError.from_name('notregistered', ':You have not registered')
+    chat = sanitize_chat(self.nick, msg)
+    if chat is None:
+      log.warning(f'dropped {cmd} from {self.client_ident()}: {msg!r}')
+      return
 
-    message = f':{self.client_ident()} {cmd} {target} {msg}'
+    message = f':{self.client_ident()} {cmd} {target} {chat}'
     if target.startswith('#') or target.startswith('$'):
       # Message to channel. Check if the channel exists.
       channel = self.server.channels.get(target)
@@ -335,21 +375,27 @@ class IRCClient(socketserver.BaseRequestHandler):
     return message
 
   def handle_part(self, params: str):
-    """Handle a client parting from channel(s)."""
-    for pchannel in params.split(','):
-      if pchannel.strip() in self.server.channels:
-        # Send message to all clients in all channels user is in, and
-        # remove the user from the channels.
-        channel = self.server.channels.get(pchannel.strip())
-        response = f':{self.client_ident()} PART :{pchannel}'
-        if channel:
-          for client in channel.clients:
-            client.send_queue.append(response)
-        channel.clients.remove(self)
-        self.channels.pop(pchannel)
-      else:
-        response = f':{self.server.servername} 403 {pchannel} :{pchannel}'
-        self.send_queue.append(response)
+    """Handle a client parting from channel(s): `PART <channel>[,<channel>] [:<reason>]` (the game sends `PART #chan :`)."""
+    names, sep, reason = params.strip().partition(' ')
+    reason = reason.lstrip(':')
+    if not names:
+      raise IRCError.from_name('needmoreparams', 'PART :Not enough parameters')
+    for name in names.split(','):
+      name = name.strip()
+      channel = self.channels.get(name)
+      if channel is None:
+        if name in self.server.channels:
+          error = f'{codes["notonchannel"]} {self.nick} {name} :You\'re not on that channel'
+        else:
+          error = f'{codes["nosuchchannel"]} {self.nick} {name} :No such channel'
+        self.send_queue.append(f':{self.server.servername} {error}')
+        continue
+      # tell everyone in the channel, the client included, and remove the membership
+      response = f':{self.client_ident()} PART {name} :{reason}'
+      for client in channel.clients:
+        client.send_queue.append(response)
+      channel.clients.discard(self)
+      self.channels.pop(name)
 
   def handle_quit(self, params: str):
     """Handle the client breaking off the connection with a `QUIT` command."""
@@ -385,9 +431,11 @@ class IRCClient(socketserver.BaseRequestHandler):
 
   def handle_mode(self, params: str):
     """Handle `MODE` command which queries/sets the visibility of a user/channel."""
-    target, mode = params.split(' ', 1)
-    if mode[0] == ":":
+    target, sep, mode = params.partition(' ')
+    if mode.startswith(':'):
       mode = mode[1:]
+    if not target or not mode:
+      raise IRCError.from_name('needmoreparams', 'MODE :Not enough parameters')
     self.mode = mode
     # channel mode
     if target[0] in ['#', '&']:
@@ -418,9 +466,18 @@ class IRCClient(socketserver.BaseRequestHandler):
         for client in channel.clients:
           client.send_queue.append(response)
         channel.clients.remove(self)
-    if self.nick:
+    if self.nick and self.server.clients.get(self.nick) is self:
       self.server.clients.pop(self.nick)
     log.info('Connection finished: %s', self.client_ident())
+
+  def drop(self):
+    """Closes a stale connection whose nick is taken over by a reconnect."""
+    self.finish()
+    self.channels = {}
+    try:
+      self.request.shutdown(socket.SHUT_RDWR)
+    except OSError:
+      pass
 
   def __repr__(self):
     """Return a user-readable description of the client."""
