@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import TypedDict
-from utils import write_u16, write_u32
+from utils import cap, write_u16, write_u32
+
+MEMBER_NAME_SIZE = 36
+"""Size of the game's buffer for a member name, terminator included."""
 
 class LSM(Enum):
   """Lobby Service Mask"""
@@ -227,7 +230,8 @@ class MemberInfo:
   def to_list(self):
     """Serialization to `MemberJoined` struct."""
     return [
-      self.username,
+      # the game copies member names into 36-byte buffers (0x004242d0, 0x00424f00)
+      cap(self.username, MEMBER_NAME_SIZE),
       "1" if self.is_visitor else "0",
       self.ip_addr,
       self.alt_ip_addr,

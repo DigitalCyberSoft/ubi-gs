@@ -5,7 +5,8 @@ sys.path.append(root_dir)
 import limits
 import ports
 import gsm, client, h5
-from group import Room, LSM, MemberInfo, PLAYER_STATUS
+from group import Room, LSM, MemberInfo, PLAYER_STATUS, MEMBER_NAME_SIZE
+from utils import cap
 from h5_data import H5_Room, H5_RoomInfo, H5_Serializer
 
 SERVER_ADDRESS = h5.ENDPOINTS["lobby"]
@@ -97,7 +98,7 @@ def send_room_update(room: H5_Room, exclude: client.TcpClient = None):
 def send_member_join(clt: client.TcpClient, group_id: int, members: list[client.TcpClient]):
   """Sends `MEMBER_JOIN` of the client to the members."""
   info = member_info(clt, group_id)
-  data = [info.username, "1" if info.is_visitor else "0", str(group_id), info.ip_addr, info.alt_ip_addr, info.player_info, str(info.status)]
+  data = [cap(info.username, MEMBER_NAME_SIZE), "1" if info.is_visitor else "0", str(group_id), info.ip_addr, info.alt_ip_addr, info.player_info, str(info.status)]
   for member in members:
     if member is not clt:
       send_notif(member, gsm.LOBBY_MSG.MEMBER_JOIN, data)
