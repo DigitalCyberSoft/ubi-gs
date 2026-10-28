@@ -974,6 +974,8 @@ class H5_Room:
   def __init__(self, room: Room, info: H5_RoomInfo):
     self.gs_room = room
     self.room_info = info
+    self.match_id: int = None
+    """Rated match being played in the room."""
 
 class H5_Serializer:
   """Equivalent to the original `CStructureSaver` serializer (HoMM5)."""

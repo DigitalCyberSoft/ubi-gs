@@ -18,6 +18,11 @@ g_rooms: list[H5_Room] = []
 next_room_id = 1000
 """Global room id assignment counter."""
 
+g_matches: dict[int, dict] = {}
+"""Rated matches being played: match id -> {'group': room id, 'results': {player: values}}."""
+
+next_match_id = 1
+
 NO_REPLY = object()
 """`handle_req` result for notifications: no reply and no echo."""
 
@@ -147,6 +152,14 @@ def leave_lobby(clt: client.TcpClient):
   if lobby_id is not None:
     send_member_leave(clt, lobby_id, lobby_members(lobby_id))
 
+def new_match(group_id: int):
+  """Starts a rated match of the room, returns its id."""
+  global next_match_id
+  match_id = next_match_id
+  next_match_id += 1
+  g_matches[match_id] = {'group': group_id, 'results': {}}
+  return match_id
+
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
   global next_room_id
@@ -249,6 +262,35 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
             host_ip = clt.addr[0]
             host_alt_ip = clt.local_ip or host_ip
             res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.GAME_STARTED, [str(group_id), data, port, host_ip, host_alt_ip]) for m in room_members(group_id)]
+        case gsm.LOBBY_MSG.START_MATCH:
+          # rated game, the host starts it: [group id, ?, ?]; everyone in the room gets MATCH_STARTED with its id
+          group_id = int(req.dl.lst[1][0])
+          res = gsm.LobbyGroupResponse(req)
+          room = find_room(group_id)
+          if room is not None:
+            match_id = new_match(group_id)
+            room.match_id = match_id
+            res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.MATCH_STARTED, [str(group_id), str(match_id)]) for m in room_members(group_id)]
+        case gsm.LOBBY_MSG.SUBMIT_MATCH:
+          # a player's results: [match id, ?, [player, max index, count, mask, [values]], ...]
+          match = g_matches.get(int(req.dl.lst[1][0]))
+          if match is not None:
+            for entry in req.dl.lst[1][2:]:
+              if isinstance(entry, list) and len(entry) >= 5:
+                match['results'][entry[0]] = entry[4]
+          res = gsm.LobbyGroupResponse(req)
+        case gsm.LOBBY_MSG.MATCH_FINISH:
+          # [group id]; the room gets everyone's submitted results
+          group_id = int(req.dl.lst[1][0])
+          res = gsm.LobbyGroupResponse(req)
+          room = find_room(group_id)
+          match_id = room.match_id if room is not None else None
+          match = g_matches.pop(match_id, None)
+          if match is not None:
+            room.match_id = None
+            results = [[name, values] for name, values in match['results'].items()]
+            final = [str(match_id), '38', results] if results else [str(match_id), '39', ['0']]
+            res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.FINAL_MATCH_RESULTS, final) for m in room_members(group_id)]
         case gsm.LOBBY_MSG.GAME_CONNECTED | gsm.LOBBY_MSG.GAME_FINISH | gsm.LOBBY_MSG.PLAYER_MATCH_STARTED | gsm.LOBBY_MSG.PLAYER_MATCH_FINISHED:
           # notifications, no reply
           res = NO_REPLY

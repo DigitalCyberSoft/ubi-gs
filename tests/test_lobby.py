@@ -193,6 +193,48 @@ class MatchStartTests(unittest.TestCase):
     for sub in ['34', '35', '44', '70']:
       self.assertIs(request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, [sub, ['1000']]), lobby.NO_REPLY)
 
+class RatedMatchTests(unittest.TestCase):
+  """START_MATCH, SUBMIT_MATCH and MATCH_FINISH."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+    lobby.g_matches.clear()
+
+  def test_match(self):
+    alice = login('alice')
+    bob = login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    for clt in [alice, bob]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    for clt in [alice, bob]:
+      clt.conn.sent.clear()
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['17', [room_id, '1', '0']])
+    self.assertEqual(res.dl.lst, ['38', ['17', [room_id]]])
+    started = notifs(alice)
+    self.assertEqual(started, notifs(bob))
+    self.assertEqual(started[0][0], '62')
+    group, match_id = started[0][1]
+    self.assertEqual(group, room_id)
+    for name, values in [('alice', ['1', '0']), ('bob', ['0', '1'])]:
+      res = request(alice if name == 'alice' else bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['30', [match_id, '0', [name, '1', '2', '3', values]]])
+      self.assertEqual(res.dl.lst, ['38', ['30', [match_id]]])
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
+    self.assertEqual(res.dl.lst, ['38', ['45', [room_id]]])
+    final = [['71', [match_id, '38', [['alice', ['1', '0']], ['bob', ['0', '1']]]]]]
+    self.assertEqual(notifs(alice), final)
+    self.assertEqual(notifs(bob), final)
+
+  def test_finish_without_results(self):
+    alice = login('alice')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['17', [room_id, '1', '0']])
+    match_id = notifs(alice)[-1][1][1]
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
+    self.assertEqual(notifs(alice), [['71', [match_id, '39', ['0']]]])
+
 class JoinOrderTests(unittest.TestCase):
   def setUp(self):
     lobby.g_clients.clear()
