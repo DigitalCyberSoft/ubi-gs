@@ -1,4 +1,4 @@
-import socket, sys, os
+import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
@@ -17,6 +17,9 @@ g_rooms: list[H5_Room] = []
 
 next_room_id = 1000
 """Global room id assignment counter."""
+
+g_lock = threading.RLock()
+"""Guards the global lobby state and sending to the clients."""
 
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
@@ -109,20 +112,14 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       raise NotImplementedError(f"No request handler for {req.header.type.name} messages.")
   return res
 
-def start_server():
-  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-  print(f"Lobby server is listening on port {SERVER_ADDRESS[1]}")
-  sock.bind(SERVER_ADDRESS)
-  sock.listen(5)
-    
-  while True:
-    clt = client.TcpClient(sock.accept())
-    g_clients.append(clt)
-    print(f"Connection from {clt.addr}")
-    try:
-      while True:
-        data = clt.conn.recv(4096)
-        if data:
+def handle_client(clt: client.TcpClient):
+  """Serves a connected game client until it disconnects."""
+  try:
+    while True:
+      data = clt.conn.recv(4096)
+      if data:
+        # shared lobby state and other players' sockets
+        with g_lock:
           req = gsm.Message(clt.sv_bf_key, in_buf=data)
           if req.header.size < len(data):
             bundle = gsm.GSMessageBundle(req, data[req.header.size:], clt)
@@ -145,12 +142,25 @@ def start_server():
               clt.conn.sendall(bytes(res))
             elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
               clt.conn.sendall(data)
-        else:
-          print("No more data from", clt.addr)
-          break
-    finally:
-      clt.conn.close()
+      else:
+        print("No more data from", clt.addr)
+        break
+  finally:
+    clt.conn.close()
+    with g_lock:
       g_clients.remove(clt)
+
+def start_server():
+  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  print(f"Lobby server is listening on port {SERVER_ADDRESS[1]}")
+  sock.bind(SERVER_ADDRESS)
+  sock.listen(5)
+    
+  while True:
+    clt = client.TcpClient(sock.accept())
+    g_clients.append(clt)
+    print(f"Connection from {clt.addr}")
+    threading.Thread(target=handle_client, args=(clt,), daemon=True).start()
 
 if __name__ == "__main__":
     start_server()
