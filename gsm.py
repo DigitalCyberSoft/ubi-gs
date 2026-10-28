@@ -519,6 +519,16 @@ class LoginFriendsResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGINFRIENDS.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+class StillAliveResponse(GSMResponse):
+  """Response to `STILLALIVE` messages.
+
+  The game sends a keepalive every 30 seconds of its own silence and drops the connection when nothing arrives from the server for 105 seconds."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.STILLALIVE:
+      raise TypeError(f"StillAliveResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+
 class LobbyMsgResponse(GSMResponse):
   """Response to `LOBBY_MSG` messages."""
   def __init__(self, req: Message):
