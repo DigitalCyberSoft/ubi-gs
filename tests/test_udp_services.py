@@ -35,7 +35,8 @@ class UdpServiceTests(unittest.TestCase):
     try:
       sock.sendto(b'\x01\x00', cdkey.SERVER_ADDRESS)
       sock.sendto(cdkey_request('1', cdkm.REQUEST_TYPE.PLAYER_STATUS, []), cdkey.SERVER_ADDRESS)
-      sock.sendto(cdkey_request('1', cdkm.REQUEST_TYPE.DISCONNECT_USER, []), cdkey.SERVER_ADDRESS)
+      # sent by the game on every clean logout: [..., '6', '1', [authId]]
+      sock.sendto(cdkey_request('1', cdkm.REQUEST_TYPE.DISCONNECT_USER, [bytes(20)]), cdkey.SERVER_ADDRESS)
       sock.sendto(cdkey_request('2', cdkm.REQUEST_TYPE.CHALLENGE, []), cdkey.SERVER_ADDRESS)
       res = cdkm.CDKeyMessage(sock.recv(1024))
       self.assertEqual(res.req_type, cdkm.REQUEST_TYPE.CHALLENGE)
