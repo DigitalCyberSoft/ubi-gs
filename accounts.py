@@ -236,3 +236,15 @@ def account_name(typed: str, ip: str) -> str:
   """The account name of the game at `ip` that logged in as `typed`; `typed` if there's no session."""
   account = session(typed, ip)
   return account.name if account else typed
+
+# ladder stats
+
+def ladder_stats(account: Account, ladder: str) -> dict[str, int]:
+  """The account's stored ladder fields."""
+  rows = _query('SELECT field, value FROM ladder WHERE account = ? AND game = ?', (account.id, ladder))
+  return dict(rows)
+
+def set_ladder_stats(account: Account, ladder: str, stats: dict[str, int]):
+  with _transaction() as conn:
+    conn.executemany('INSERT OR REPLACE INTO ladder (account, game, field, value) VALUES (?, ?, ?, ?)',
+      [(account.id, ladder, field, int(value)) for field, value in stats.items()])
