@@ -192,7 +192,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       subtype = gsm.LOBBY_MSG(int(req.dl.lst[0]))
       match subtype:
         case gsm.LOBBY_MSG.JOIN_SERVER:
-          res = gsm.JoinLobbyServerResponse(req, SERVER_ADDRESS)
+          # the address the game reached (or UBIGS_HOST), not the one listened on
+          res = gsm.JoinLobbyServerResponse(req, h5.advertised(SERVER_ADDRESS, clt.conn))
         case gsm.LOBBY_MSG.GROUP_INFO_GET:
           group_id = int(req.dl.lst[1][0])
           flags = int(req.dl.lst[1][1])

@@ -25,6 +25,10 @@ class FakeConn:
   def __init__(self):
     self.sent: list[bytes] = []
 
+  def getsockname(self):
+    # the server address the game reached
+    return ('10.0.0.1', 7785)
+
   def sendall(self, data: bytes):
     self.sent.append(data)
 
@@ -205,6 +209,12 @@ class ProtocolTests(unittest.TestCase):
     # the second field is a flag, not the server id
     res = request(clt, gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN, ['alice', '0', '192.168.0.41', '255.255.255.0', '0'])
     self.assertEqual(res.dl.lst, ['210', ['1']])
+
+  def test_join_server_address(self):
+    # the advertised address, not the listening 0.0.0.0 (#56)
+    clt = make_client('alice')
+    res = request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['3', ['1']])
+    self.assertEqual(res.dl.lst, ['38', ['3', ['1', '10.0.0.1', '7785']]])
 
   def test_group_info_get_no_extra_reply(self):
     clt = login('alice')
