@@ -242,7 +242,7 @@ class IRCClient(socketserver.BaseRequestHandler):
         r_channel_name = r_channel_name[1:]
 
       # Valid channel name?
-      if not re.match('^#([a-zA-Z0-9_\.])+$', r_channel_name):
+      if not re.match(r'^#([a-zA-Z0-9_\.])+$', r_channel_name):
         raise IRCError.from_name(
           'nosuchchannel', f'{r_channel_name} :No such channel'
         )
