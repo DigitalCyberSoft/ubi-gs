@@ -3,6 +3,7 @@ import sys, os, unittest
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import client, gsm
+from data import List
 
 class StillAliveTests(unittest.TestCase):
   """Tests for `STILLALIVE` keepalive responses."""
@@ -52,6 +53,15 @@ class BundleTests(unittest.TestCase):
     first = gsm.Message(None, in_buf=data)
     bundle = gsm.GSMessageBundle(first, data[first.header.size:], client.TcpClient((None, None)))
     self.assertEqual(len(bundle.msgs), 2)
+
+class RedactionTests(unittest.TestCase):
+  """Logs leave out credentials."""
+  def test_login_password(self):
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOGIN, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['alice', 'secret', 'HEROES_c83663d1c69a2024', b'\x01']))))
+    text = repr(gsm.Message(None, in_buf=buf))
+    self.assertIn('alice', text)
+    self.assertNotIn('secret', text)
 
 if __name__ == '__main__':
   unittest.main()

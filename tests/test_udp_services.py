@@ -54,5 +54,10 @@ class UdpServiceTests(unittest.TestCase):
     finally:
       sock.close()
 
+class CDKeyRedactionTests(unittest.TestCase):
+  def test_auth_key_data(self):
+    req = cdkm.CDKeyMessage(cdkey_request('1', cdkm.REQUEST_TYPE.AUTH, [b'b\x00\x00\x00\x0bKEYDERIVEDX']))
+    self.assertNotIn('KEYDERIVED', repr(req))
+
 if __name__ == '__main__':
   unittest.main()

@@ -37,6 +37,9 @@ class CDKeyMessage:
       self.inner_dl = self.dl.lst[3]
     
   def __repr__(self) -> str:
+    # activation and authorization data derive from the player's key
+    if self.req_type in [REQUEST_TYPE.ACTIVATION, REQUEST_TYPE.AUTH]:
+      return f"<{self.req_type.name}:\t{self.dl.lst[:3] + ['<key data>']}>"
     return f"<{self.req_type.name}:\t{str(self.dl)}>"
 
 class Response:
