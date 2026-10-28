@@ -30,6 +30,14 @@ class StillAliveTests(unittest.TestCase):
     self.assertEqual(res.header.sender, gsm.SENDER_RECEIVER.S)
     self.assertEqual(res.header.receiver, gsm.SENDER_RECEIVER.P)
 
+  def test_size_without_payload(self):
+    # the request had a payload; the reply has none and must say 6 bytes (#59)
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.STILLALIVE, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['x']))))
+    self.assertGreater(buf[2], 6)
+    res = bytes(gsm.StillAliveResponse(gsm.Message(None, in_buf=buf)))
+    self.assertEqual(res, bytes([0x00, 0x00, 0x06, 0x01, 0x3A, 0x24]))
+
   def test_still_alive_response_type(self):
     req = gsm.Message(None, in_buf=bytes([0x00, 0x00, 0x06, 0x01, 0x3B, 0x42]))
     with self.assertRaises(TypeError):
