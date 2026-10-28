@@ -159,7 +159,8 @@ class IRCClient(socketserver.BaseRequestHandler):
   def _handle_lines(self, msg: ircm.IRCMessage):
     self.buffer.feed(msg.payload)
     for line in self.buffer:
-      line = line.decode('utf-8', errors='replace')
+      # the game's bytes, one character each, so chat comes back as it was sent
+      line = utils.game_str(line)
       print(f'req: {line}')
       self._handle_line(line)
 

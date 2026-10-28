@@ -140,6 +140,16 @@ class AccountTests(AccountTestCase):
     # no session: the typed name
     self.assertEqual(accounts.account_name('alice', '10.0.0.9'), 'alice')
 
+class GameBytesPasswordTests(AccountTestCase):
+  def test_hash_unchanged(self):
+    """Passwords are still hashed from the UTF-8 of their Latin-1 reading, so existing databases keep working (#55)."""
+    import hashlib
+    password = b'p\xe4ss'.decode('latin-1')
+    account = accounts.login('alice', password)
+    row = accounts.db().execute('SELECT hash, salt FROM accounts WHERE id = ?', (account.id,)).fetchone()
+    self.assertEqual(row[0], hashlib.scrypt('päss'.encode('utf8'), salt=row[1], **accounts.SCRYPT))
+    self.assertEqual(accounts.login('alice', password), account)
+
 class MemoryTests(unittest.TestCase):
   def tearDown(self):
     accounts.configure(None)

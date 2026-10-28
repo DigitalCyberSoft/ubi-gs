@@ -4,6 +4,7 @@ from group import Room
 import socket
 from utils import read_u32, read_as_u32_list, read_u16, read_u16_be, write_u32, write_u32_list, write_u16, write_u16_be
 from uuid import UUID
+from utils import GAME_ENCODING
 
 class H5_STREAM_TYPE(Enum):
   """Main file stream type for serialized buffers; names assumed."""
@@ -141,7 +142,7 @@ class H5_PlayerInfo:
       cur_idx = 2
       # empty for player slots nobody took yet
       if field.id == cur_idx:
-        self.username = field.data.decode("utf-8")
+        self.username = field.data.decode(GAME_ENCODING)
       else:
         raise ValueError(f"PlayerInfo: missing/invalid field - Username ({cur_idx})")
       pos += len(field)
@@ -210,7 +211,7 @@ class H5_PlayerInfo:
     field = H5_Stream()
 
     field.id = 2
-    field.data = self.username.encode("utf-8")
+    field.data = self.username.encode(GAME_ENCODING, errors="replace")
     field.size = len(field.data)
     buf.extend(field.write())
 
@@ -517,7 +518,7 @@ class H5_RoomInfo:
       field = H5_Stream(buf[pos:])
       cur_idx = 32
       if field.id == cur_idx and field.size > 0:
-        self.map_goal = field.data.decode("utf-8")
+        self.map_goal = field.data.decode(GAME_ENCODING)
       elif field.size == 0:
         self.map_goal = ""
       else:
@@ -527,7 +528,7 @@ class H5_RoomInfo:
       field = H5_Stream(buf[pos:])
       cur_idx = 33
       if field.id == cur_idx and field.size > 0:
-        self.arena_map_name = field.data.decode("utf-8")
+        self.arena_map_name = field.data.decode(GAME_ENCODING)
       elif field.size == 0:
         self.arena_map_name = ""
       else:
@@ -573,7 +574,7 @@ class H5_RoomInfo:
     inner_field = H5_Stream(buf)
     idx = 2
     if inner_field.id == idx and inner_field.size > 0:
-      return inner_field.data.decode("utf-8")
+      return inner_field.data.decode(GAME_ENCODING)
     elif inner_field.size == 0:
       return ""
     else:
@@ -651,7 +652,7 @@ class H5_RoomInfo:
         for _ in range(count):
           field = H5_Stream(buf[pos:])
           if field.id == 1:
-            keys.append(field.data.decode("utf-8"))
+            keys.append(field.data.decode(GAME_ENCODING))
           else:
             raise ValueError(f"RoomInfo: missing/invalid field - Options.Key (1)")
           pos += len(field)
@@ -698,7 +699,7 @@ class H5_RoomInfo:
     """Writes a string as nested inside idx 2 field."""
     field = H5_Stream()
     field.id = 2
-    field.data = string.encode("utf-8")
+    field.data = string.encode(GAME_ENCODING, errors="replace")
     field.size = len(field.data)
     return field.write()
 
@@ -772,7 +773,7 @@ class H5_RoomInfo:
     for key in options:
       # keys - idx 1
       field.id = 1
-      field.data = key.encode("utf-8")
+      field.data = key.encode(GAME_ENCODING, errors="replace")
       field.size = len(field.data)
       buf.extend(field.write())
       # values - idx 2
@@ -938,12 +939,12 @@ class H5_RoomInfo:
     buf.extend(field.write())
 
     field.id = 32
-    field.data = self.map_goal.encode("utf-8")
+    field.data = self.map_goal.encode(GAME_ENCODING, errors="replace")
     field.size = len(field.data)
     buf.extend(field.write())
 
     field.id = 33
-    field.data = self.arena_map_name.encode("utf-8")
+    field.data = self.arena_map_name.encode(GAME_ENCODING, errors="replace")
     field.size = len(field.data)
     buf.extend(field.write())
 

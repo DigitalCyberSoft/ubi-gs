@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
+from utils import game_bytes
 
 class DATA_TYPE(Enum):
   """Serializable data type."""
@@ -39,7 +40,8 @@ class String(Data):
   
   def __bytes__(self):
     bts = bytearray([0x73])
-    bts.extend(bytes(self.string, 'utf8'))
+    # the game's bytes, as read (see `utils.GAME_ENCODING`)
+    bts.extend(game_bytes(self.string))
     bts.append(0x00)
     return bytes(bts)
     
