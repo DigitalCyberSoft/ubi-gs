@@ -80,7 +80,8 @@ class LobbyTests(unittest.TestCase):
     bob = login('bob')
     # bob gets everybody, alice gets bob
     self.assertEqual([m[0] for m in notifs(bob)[0][1][4]], ['alice', 'bob'])
-    self.assertEqual(notifs(alice), [['50', ['bob', '0', '1', '127.0.0.1', '192.168.0.41', b'', '0']]])
+    # the lobby never shows a member's addresses (#12)
+    self.assertEqual(notifs(alice), [['50', ['bob', '0', '1', '0.0.0.0', '0.0.0.0', b'', '0']]])
 
   def test_room_list(self):
     alice = login('alice')
@@ -138,16 +139,70 @@ class LobbyTests(unittest.TestCase):
       self.assertEqual(msgs[0][1][:2], [str(room_id), '64'])
       self.assertEqual(msgs[0][1][3:], [[], []])
 
+  def player_info(self, name: str):
+    """The game's own player data, as SET_PLAYER_INFO carries it: a PlayerInfo with its addresses."""
+    entry = h5_data.H5_PlayerInfo()
+    entry.username = name
+    entry.ext_ip.family = 2
+    entry.ext_ip.port = 8888
+    entry.ext_ip.ip = '203.0.113.7'
+    entry.local_port = 8888
+    entry.local_ip.ip = '192.168.0.41'
+    entry.int38 = 1500
+    return entry
+
   def test_set_player_info(self):
     alice = login('alice')
     bob = login('bob')
     notifs(alice)
-    res = request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    entry = self.player_info('bob')
+    data = h5_data.H5_Serializer().serialize_playerinfo(entry)
+    res = request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [data]])
     self.assertEqual(res.dl.lst, ['38', ['42']])
-    self.assertEqual(notifs(alice), [['66', ['bob', b'data']]])
+    # the lobby gets the data (the rating) without the addresses (#12)
+    scrubbed = lobby.scrub_player_info(entry)
+    expected = h5_data.H5_Serializer().serialize_playerinfo(scrubbed)
+    self.assertEqual(notifs(alice), [['66', ['bob', expected]]])
+    self.assertNotIn(bytes([203, 0, 113, 7]), expected)
+    self.assertNotIn(bytes([192, 168, 0, 41]), expected)
+    self.assertEqual(h5_data.H5_Serializer().deserialize_playerinfo(expected).int38, 1500)
     carol = login('carol')
     members = notifs(carol)[0][1][4]
-    self.assertEqual(members[1][4], b'data')
+    self.assertEqual(members[1][4], expected)
+    # data that isn't a PlayerInfo can't be checked for addresses: not passed on
+    notifs(alice)
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    self.assertEqual(notifs(alice), [['66', ['bob', b'']]])
+
+  def test_room_addresses_only_inside(self):
+    # #12: the room's members see each other's addresses, the rest of the lobby doesn't
+    alice = login('alice')
+    bob = login('bob')
+    carol = login('carol')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    room = lobby.find_room(int(room_id))
+    room.room_info.host_ip.ip = '203.0.113.7'
+    room.room_info.player_infos.append(self.player_info('alice'))
+    for clt in [alice, bob, carol]:
+      clt.conn.sent.clear()
+    # carol in the lobby: the room without addresses
+    lobby.send_group_info(carol, 1, 384)
+    rooms = notifs(carol)[0][1][3]
+    self.assertEqual(rooms[0][18], '0.0.0.0')
+    info = h5_data.H5_Serializer().deserialize_roominfo(rooms[0][10])
+    self.assertEqual((info.host_ip.ip, info.player_infos[0].ext_ip.ip, info.player_infos[0].local_ip.ip), ('0.0.0.0',) * 3)
+    # bob joins: inside the room he gets the host's addresses
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    msgs = notifs(bob)
+    room_data = [m for m in msgs if m[0] == '53'][0][1][2]
+    info = h5_data.H5_Serializer().deserialize_roominfo(room_data[10])
+    self.assertEqual((room_data[18], info.host_ip.ip, info.player_infos[0].local_ip.ip), ('127.0.0.1', '203.0.113.7', '192.168.0.41'))
+    joined = [m for m in msgs if m[0] == '50' and m[1][0] == 'alice'][0]
+    self.assertEqual(joined[1][3:5], ['127.0.0.1', '192.168.0.41'])
+    # carol, still outside, never got an address
+    self.assertNotIn('127.0.0.1', str(notifs(carol)))
 
   def test_set_player_info_outside_lobby(self):
     # clients outside any lobby don't get each other's player data (#58)
