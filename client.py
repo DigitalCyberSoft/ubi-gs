@@ -45,7 +45,10 @@ class NatClient(UdpClient):
     self.ping_id: int = None
     """Id the game puts in its NAT pings, see `gsm.NAT_MSG.PORT_ID`."""
     self.nat_req = None
-    """The game's NAT address request (`gsm.Message`), answered on every ping."""
+    """The game's NAT address request (`gsm.Message`), answered on the first ping after it."""
+    self.address_pending = False
+    """The address for `nat_req` hasn't been sent yet. The game keeps address replies it didn't ask for
+    in its 536-byte SRP receive buffer; once that is full it ignores the NAT service, so one per request."""
     self.last_seen = 0.0
     """`time.monotonic()` of the last packet from the client."""
 

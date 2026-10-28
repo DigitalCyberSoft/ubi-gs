@@ -134,6 +134,16 @@ class SRPSegment:
         result.extend(bytes(self.window))
     return bytes(result)
   
+def ack_segment(clt: client.NatClient):
+  """A bare ACK of the last client segment, as the game sends its own: no data, segment number 0xFFFF.
+  It keeps the SRP connection alive without adding to the game's receive buffer."""
+  flags = SRPHeaderFlags.SRP_ID.value | SRPHeaderFlags.ACK.value
+  header = bytearray(write_u16(clt.checksum_init or 0) + write_u16(clt.sender_sig or 0) + write_u16(0) +
+    write_u16(flags) + write_u16(0xFFFF) + write_u16(clt.last_segment))
+  checksum = SRPResponse._SRPResponse__make_checksum(bytes(header))
+  header[0:2] = checksum
+  return bytes(header)
+
 class SRPResponse:
   """SRP response.
 

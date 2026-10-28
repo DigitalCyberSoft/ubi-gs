@@ -146,6 +146,27 @@ class NatServerTests(unittest.TestCase):
     res = srp.SRPRequest(packets[0][0])
     self.assertEqual(res.segment.msg.dl.lst, ['3', ['1', str(0x7F000001), '8888']])
 
+  def test_one_address_per_request(self):
+    """Later pings get a bare ACK: the game keeps unasked-for addresses in its 536-byte receive buffer,
+    and stops answering the NAT service once it is full."""
+    ping_id = self.connect(0.0)
+    gsnat.handle_packet(struct.pack('>I', ping_id), self.GAME_PORT, 25.0)
+    for t in range(50, 50 + 30 * 25, 25):
+      packets = gsnat.handle_packet(struct.pack('>I', ping_id), self.GAME_PORT, float(t))
+      self.assertEqual(len(packets), 1)
+      data = packets[0][0]
+      self.assertEqual(len(data), srp.SRP_HEADER_SIZE)
+      header = srp.SRPHeader(data)
+      self.assertEqual((header.seg, header.ack, header.data_size), (0xFFFF, 1, 0))
+      self.assertEqual(header.flags, [srp.SRPHeaderFlags.ACK.name, srp.SRPHeaderFlags.SRP_ID.name])
+      self.assertEqual(header.checksum, make_checksum(data, CHECKSUM_INIT))
+    # the ACKs don't use up segment numbers: SYN+ACK, PORT_ID, ADDRESS
+    self.assertEqual(gsnat.CLIENTS[0].segment_id, 3)
+    # a new request gets its address on the next ping
+    gsnat.handle_packet(make_segment(0, 2, 0, make_nat_request('2')), self.GAME, 800.0)
+    packets = gsnat.handle_packet(struct.pack('>I', ping_id), self.GAME_PORT, 801.0)
+    self.assertEqual(srp.SRPRequest(packets[0][0]).segment.msg.dl.lst, ['3', ['2', str(0x7F000001), '8888']])
+
   def test_unknown_ping(self):
     ping_id = self.connect(0.0)
     self.assertEqual(gsnat.handle_packet(struct.pack('>I', ping_id ^ 1), self.GAME_PORT, 1.0), [])
