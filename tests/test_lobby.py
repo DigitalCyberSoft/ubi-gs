@@ -229,6 +229,31 @@ class ProtocolTests(unittest.TestCase):
     # OPEN only (0x2) carries the dsFlags value before max players
     request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x2 | 0x8), '16', '4']])
     self.assertEqual(lobby.find_room(int(room_id)).gs_room.max_players, 4)
+class RoomConfigTests(unittest.TestCase):
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_only_the_host(self):
+    # another player can't change a room (#57)
+    alice = login('alice')
+    bob = login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    for clt in [alice, bob]:
+      clt.conn.sent.clear()
+    # refused like other bad requests: logged, no reply, the player stays connected
+    with self.assertRaises(ValueError):
+      request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x8 | 0x20), '8', 'owned']])
+    room = lobby.find_room(int(room_id))
+    self.assertEqual((room.gs_room.max_players, room.gs_room.room_password), (2, ''))
+    self.assertEqual(notifs(alice), [])
+    # the host can
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x8), '4']])
+    self.assertEqual(res.dl.lst, ['38', ['31', [room_id]]])
+    self.assertEqual(room.gs_room.max_players, 4)
+
 class RatedMatchTests(unittest.TestCase):
   """START_MATCH, SUBMIT_MATCH and MATCH_FINISH."""
   def setUp(self):

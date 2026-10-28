@@ -250,6 +250,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           room = find_room(group_id)
           if room is None:
             raise ValueError(f'Room {group_id} not found on GROUP_CONFIG_UPDATE_RES.')
+          if room.gs_room.master != clt.username:
+            # only the host configures its room; the game sends this from the host only
+            raise ValueError(f'{clt.username} is not the host of room {group_id}.')
           res = gsm.GroupConfigUpdateResultResponse(req, room)
           # process group_info buffer
           room.room_info = H5_Serializer().deserialize_roominfo(room.gs_room.group_info)
