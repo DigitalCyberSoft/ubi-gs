@@ -37,9 +37,18 @@ setvar net_ubi_cdkey_port = 42501
 ## What works
 - ubi.com login with accounts: a first login creates the account. If your name is taken, you get name-1; log in with the same name and password to get the same account back.
 - Lobby channels, the game list, the player list and chat.
-- Creating and joining games: both players see each other in the game's slots.
-- Ratings in the player list (1500 to start with), the friend list (add and remove, kept across restarts) and the Profile screen's stored data.
-- Starting a game does not work yet: Start Game stays disabled ("all joined players are ready").
+- Friends: add and remove them in the lobby, see who is online. The list is kept across restarts.
+- Ratings in the player list (1500 to start with).
+- Creating, joining and starting games, unrated (Casual) and rated (Ranked), and playing them on the map. A rated game's results go back to the players when it ends.
+- Not yet: rated results don't change the ratings, and the Profile screen shows the game's "not played for rating" message because no profile is ever stored.
+
+## Starting a game
+
+In the game's room ("Standard options"), every player has to mark themselves ready before the host can press Start Game:
+1. In your own row, click the small arrow to the right of the round state icon (tooltip "Set current player state"). The icon changes to a brain with a tick, and the other players see it too.
+2. Once every joined player, the host included, shows the tick, the host's Start Game button turns on.
+
+Clicking the arrow again takes the mark back. Readiness goes straight between the games over the host's game port (UDP 8888 by default), not through these services, so the host's game port must be reachable by the other players.
 
 ## Running publicly
 
