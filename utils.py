@@ -86,6 +86,10 @@ def ipv4_to_u32(ip: str):
   result = socket.inet_aton(ip)
   return read_u32(result)
 
+def ipv4_to_u32_be(ip: str):
+  """Converts IPv4 address into host-order integer representation (127.0.0.1 -> 0x7F000001)."""
+  return read_u32_be(socket.inet_aton(ip))
+
 def read_ipv4(ip: bytes):
   """Reads IPv4 address from a network buffer (LE)."""
   if len(ip) != 4:

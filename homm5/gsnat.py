@@ -10,6 +10,9 @@ SERVER_ADDRESS = h5.ENDPOINTS["nat"]
 CLIENTS: list[client.NatClient] = []
 """Global list of connected game clients."""
 
+next_ping_id = 1
+"""Global NAT ping id assignment counter."""
+
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(SERVER_ADDRESS)
 
@@ -18,10 +21,20 @@ print(f"GSNAT server is listening on port {SERVER_ADDRESS[1]}")
 while True:
   data, address = sock.recvfrom(1024)
   packet_size = len(data)
-  # NAT pings
+  # NAT pings, sent from the game's own port with the id from NAT_MSG.PORT_ID
   if packet_size < srp.SRP_HEADER_SIZE:
-    print(f"<REQ: PING>\n{utils.read_ipv4(data)}")
-    sock.sendto(data, address)
+    print(f"<REQ: PING> {address[0]}:{address[1]}")
+    if packet_size != 4:
+      continue
+    clt = client.NatClient.find_by_ping(utils.read_u32_be(data), CLIENTS)
+    if clt is None or clt.nat_req is None:
+      print(f'unknown ping id {data.hex()}')
+      continue
+    # the address the ping came from, over the SRP connection; this also keeps it alive (120s timeout)
+    msg = gsm.NatResponse(clt.nat_req, gsm.NAT_MSG.ADDRESS, utils.ipv4_to_u32_be(address[0]), address[1])
+    res = srp.SRPResponse(None, clt, msg)
+    sock.sendto(bytes(res), (clt.addr, clt.port))
+    print(res)
   else:
     clt = client.NatClient.find(address, CLIENTS)
     req = srp.SRPRequest(data)
@@ -32,15 +45,17 @@ while True:
       print(f'added client {clt.addr}:{clt.port}')
     # ConnectHost (SYN)
     if req.segment.window:
-      res = srp.SRPResponse(req, clt, SERVER_ADDRESS[1])
+      res = srp.SRPResponse(req, clt)
       sock.sendto(bytes(res), address)
       print(res)
-    # NAT message
+    # NAT message (address request), the address is sent when the game pings
     elif req.segment.msg:
-      res = srp.SRPResponse(req, clt, SERVER_ADDRESS[1], gsm.NAT_MSG.PORT_ID)
-      sock.sendto(bytes(res), address)
-      print(res)
-      res = srp.SRPResponse(req, clt, SERVER_ADDRESS[1], gsm.NAT_MSG.ADDRESS)
+      clt.nat_req = req.segment.msg
+      if clt.ping_id is None:
+        clt.ping_id = next_ping_id
+        next_ping_id += 1
+      msg = gsm.NatResponse(clt.nat_req, gsm.NAT_MSG.PORT_ID, clt.ping_id, SERVER_ADDRESS[1])
+      res = srp.SRPResponse(req, clt, msg)
       sock.sendto(bytes(res), address)
       print(res)
     # Disconnect (FIN)

@@ -608,16 +608,18 @@ class JoinLobbyResponse(GSMResponse):
     self.dl = List([result, [subtype, [group_id]]])
 
 class NatResponse(GSMResponse):
-  """Response to `NAT` messages."""
-  def __init__(self, req: Message, subtype: NAT_MSG, clt: client.NatClient, port: int):
+  """Response to `NAT` messages.
+
+  `PORT_ID` tells the game where to send its NAT pings and the 4-byte id to put in them (`ip`), `ADDRESS` is the game's public address as seen in its pings.
+  The game reads `ip` as a host-order integer (127.0.0.1 is 0x7F000001)."""
+  def __init__(self, req: Message, subtype: NAT_MSG, ip: int, port: int):
     if req.header.type != MESSAGE_TYPE.NAT:
       raise TypeError(f"NatResponse constructed from {req.header.type} request.")
     super().__init__(req)
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.NAT
     socketId = req.dl.lst[1][0]
-    ip = str(utils.ipv4_to_u32(clt.addr))
-    self.dl = List([str(subtype.value), [socketId, ip, str(port)]])
+    self.dl = List([str(subtype.value), [socketId, str(ip), str(port)]])
 
 class GetGroupInfoResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_INFO_GET` messages.

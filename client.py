@@ -25,7 +25,17 @@ class NatClient(UdpClient):
     self.checksum_init = checksum_init
     self.sender_sig = sender_sig
     self.segment_id = 0
+    self.last_segment = 0
+    """Id of the last client segment acknowledged by the server."""
+    self.ping_id: int = None
+    """Id the game puts in its NAT pings, see `gsm.NAT_MSG.PORT_ID`."""
+    self.nat_req = None
+    """The game's NAT address request (`gsm.Message`), answered on every ping."""
 
   def find(addr: tuple[str, int], clients: list[typing.Self]):
     """Searches for the address in the list and returns the client if found."""
     return next((cl for cl in clients if cl.addr == addr[0] and cl.port == addr[1]), None)
+
+  def find_by_ping(ping_id: int, clients: list[typing.Self]):
+    """Searches for the NAT ping id in the list and returns the client if found."""
+    return next((cl for cl in clients if cl.ping_id == ping_id), None)
