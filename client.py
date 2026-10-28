@@ -11,6 +11,11 @@ class TcpClient:
     self.game_bf_key: bytes = None
     self.sv_bf_key: bytes = None
     self.username: str = None
+    self.account = None
+    """`accounts.Account` after a router login."""
+    self.typed_name: str = None
+    """The name the player typed at login, which the game keeps as its own (`username` is the account name)."""
+    """`accounts.Account` after a router login."""
     self.local_ip: str = None
     """Local (private) IPv4 reported at lobby login."""
     self.lobby_id: int = None

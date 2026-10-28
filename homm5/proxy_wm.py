@@ -4,7 +4,7 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import limits
 import ports
-import gsm, pkc, client, h5
+import gsm, pkc, client, h5, accounts
 
 SERVER_ADDRESS = h5.ENDPOINTS["proxy_wm"]
 """Address of the proxy's wait module service."""
@@ -22,7 +22,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
     case gsm.MESSAGE_TYPE.STILLALIVE:
       res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.LOGINWAITMODULE:
-      clt.username = req.dl.lst[0]
+      # the name typed at login; the router knows its account
+      clt.username = accounts.account_name(req.dl.lst[0], clt.addr[0])
       res = gsm.ProxyLoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.PROXY_HANDLER:
       # module requests (e.g. ladder queries, 1281): closing the module's connection fails them,
