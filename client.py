@@ -31,6 +31,8 @@ class NatClient(UdpClient):
     """Id the game puts in its NAT pings, see `gsm.NAT_MSG.PORT_ID`."""
     self.nat_req = None
     """The game's NAT address request (`gsm.Message`), answered on every ping."""
+    self.last_seen = 0.0
+    """`time.monotonic()` of the last packet from the client."""
 
   def find(addr: tuple[str, int], clients: list[typing.Self]):
     """Searches for the address in the list and returns the client if found."""

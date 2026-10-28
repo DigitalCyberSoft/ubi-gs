@@ -1,8 +1,11 @@
 import sys, os, struct, unittest
+from ctypes import c_uint32
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import client, gsm, srp, utils
+sys.path.append(os.path.join(root_dir, 'homm5'))
+import gsnat
 from data import List
 
 CHECKSUM_INIT = 0x1AB7
@@ -97,6 +100,69 @@ class NatTests(unittest.TestCase):
     clt.ping_id = 7
     self.assertIs(client.NatClient.find_by_ping(utils.read_u32_be(bytes([0, 0, 0, 7])), [clt]), clt)
     self.assertIsNone(client.NatClient.find_by_ping(8, [clt]))
+
+class NatServerTests(unittest.TestCase):
+  """Tests for the NAT service packet handling."""
+  GAME = ('127.0.0.1', 1024)
+  GAME_PORT = ('127.0.0.1', 8888)
+
+  def setUp(self):
+    gsnat.CLIENTS.clear()
+
+  def connect(self, now: float):
+    """SYN and NAT address request, returns the ping id."""
+    window = struct.pack('<HHHH', 10, SENDER_SIG, CHECKSUM_INIT, 0x218)
+    gsnat.handle_packet(make_segment(srp.SRPHeaderFlags.SYN.value, 0, 0, window), self.GAME, now)
+    packets = gsnat.handle_packet(make_segment(0, 1, 0, make_nat_request('1')), self.GAME, now)
+    res = srp.SRPRequest(packets[0][0])
+    return c_uint32(int(res.segment.msg.dl.lst[1][1])).value
+
+  def test_new_ping_id(self):
+    ids = set()
+    for _ in range(100):
+      ping_id = gsnat.new_ping_id(gsnat.CLIENTS)
+      self.assertTrue(0 < ping_id <= 0xFFFFFFFF)
+      clt = client.NatClient(('127.0.0.1', 1024 + len(ids)), None, None)
+      clt.ping_id = ping_id
+      gsnat.CLIENTS.append(clt)
+      ids.add(ping_id)
+    self.assertEqual(len(ids), 100)
+
+  def test_ping(self):
+    ping_id = self.connect(0.0)
+    packets = gsnat.handle_packet(struct.pack('>I', ping_id), self.GAME_PORT, 25.0)
+    self.assertEqual(len(packets), 1)
+    self.assertEqual(packets[0][1], self.GAME)
+    res = srp.SRPRequest(packets[0][0])
+    self.assertEqual(res.segment.msg.dl.lst, ['3', ['1', str(0x7F000001), '8888']])
+
+  def test_unknown_ping(self):
+    ping_id = self.connect(0.0)
+    self.assertEqual(gsnat.handle_packet(struct.pack('>I', ping_id ^ 1), self.GAME_PORT, 1.0), [])
+    self.assertEqual(gsnat.handle_packet(b'\x00\x00', self.GAME_PORT, 1.0), [])
+
+  def test_expire_silent_client(self):
+    self.connect(0.0)
+    gsnat.remove_silent(gsnat.CLIENT_TIMEOUT - 1)
+    self.assertEqual(len(gsnat.CLIENTS), 1)
+    gsnat.remove_silent(gsnat.CLIENT_TIMEOUT + 1)
+    self.assertEqual(gsnat.CLIENTS, [])
+
+  def test_ping_keeps_client(self):
+    ping_id = self.connect(0.0)
+    gsnat.handle_packet(struct.pack('>I', ping_id), self.GAME_PORT, 100.0)
+    gsnat.remove_silent(gsnat.CLIENT_TIMEOUT + 1)
+    self.assertEqual(len(gsnat.CLIENTS), 1)
+
+  def test_reconnect_fresh_entry(self):
+    old_id = self.connect(0.0)
+    old = gsnat.CLIENTS[0]
+    new_id = self.connect(10.0)
+    self.assertEqual(len(gsnat.CLIENTS), 1)
+    self.assertIsNot(gsnat.CLIENTS[0], old)
+    # the restarted game's first segment is acknowledged from 0 again
+    self.assertEqual(gsnat.CLIENTS[0].segment_id, 2)
+    self.assertNotEqual(old_id, new_id)
 
 if __name__ == '__main__':
   unittest.main()
