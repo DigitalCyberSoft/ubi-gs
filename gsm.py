@@ -421,6 +421,17 @@ class LoginResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGIN.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+class LoginFailResponse(GSMResponse):
+  """Refusal of a `LOGIN`: GSFAIL [b'f', [reason (u32 little-endian)]], read by the game at 0x00428ea0."""
+  def __init__(self, req: Message, reason: int):
+    if req.header.type != MESSAGE_TYPE.LOGIN:
+      raise TypeError(f"LoginFailResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSFAIL
+    msg_id = MESSAGE_TYPE.LOGIN.value
+    self.dl = List([msg_id.to_bytes(1, 'little'), [reason.to_bytes(4, 'little')]])
+
 class JoinWaitModuleResponse(GSMResponse):
   """Response to `JOINWAITMODULE` messages."""
   def __init__(self, req: Message, wait_module: tuple[str, int]):
