@@ -109,12 +109,27 @@ def apply(outcomes: list, stored: dict):
     result[aid] = s
   return result
 
+def settled(reports: dict, finisher):
+  """A player's values from the clients' reports {client: values}: the values all reports agree on (by
+  result), else the report of the client that finished the match (the host, which stayed to the end;
+  a client that quits early reports itself as the winner), else None."""
+  results = {str(v[0]) if isinstance(v, list) and v else None for v in reports.values()}
+  if len(results) == 1:
+    return next(iter(reports.values()))
+  return reports.get(finisher)
+
 def match_finished(match: dict):
   """Applies a finished match: {'game', 'players' (account names), 'accounts' {name: Account},
-  'results' {name: values}, 'disputed' {names}}. Returns the accounts rated."""
+  'results' {name: values}, 'reports' {name: {client: values}}, 'finisher' (client)}. Returns the accounts rated."""
   players = {p.lower() for p in match['players']}
   outcomes, seen = [], set()
   for name, values in match['results'].items():
+    reports = match.get('reports', {}).get(name)
+    if reports:
+      values = settled(reports, match.get('finisher'))
+      if values is None:
+        print(f"The players' results for {name} disagree, not rated")
+        continue
     v = parse(values)
     account = match['accounts'].get(name)
     if v is None:
@@ -122,9 +137,6 @@ def match_finished(match: dict):
       continue
     if account is None or account.name.lower() not in players or account.id in seen:
       print(f"Match results for {name}, who isn't one of its players, not rated")
-      continue
-    if name in match['disputed']:
-      print(f"The players' results for {name} disagree, not rated")
       continue
     seen.add(account.id)
     outcomes.append((account, v))

@@ -225,7 +225,7 @@ def new_match(group_id: int):
   for member in members:
     if member.typed_name and member.typed_name not in by_name and by_name.get(member.username):
       by_name[member.typed_name] = by_name[member.username]
-  g_matches[match_id] = {'group': group_id, 'results': {}, 'by': {}, 'disputed': set(), 'accounts': by_name,
+  g_matches[match_id] = {'group': group_id, 'results': {}, 'reports': {}, 'accounts': by_name,
     'players': [m.username for m in members], 'game': room.gs_room.game_title if room else ''}
   return match_id
 
@@ -356,12 +356,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
             for entry in req.dl.lst[1][2:]:
               if isinstance(entry, list) and len(entry) >= 5:
                 name, values = entry[0], entry[4]
-                # every client submits every player's values; a different result from another player is disputed
-                old = match['results'].get(name)
-                if old and values and match['by'].get(name) is not clt and old[0] != values[0]:
-                  match['disputed'].add(name)
+                # every client submits every player's values; each report is kept for the ladder
                 match['results'][name] = values
-                match['by'][name] = clt
+                match['reports'].setdefault(name, {})[clt] = values
           res = gsm.LobbyGroupResponse(req)
         case gsm.LOBBY_MSG.MATCH_FINISH:
           # [group id]; the room gets everyone's submitted results
@@ -376,6 +373,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
             final = [str(match_id), '38', results] if results else [str(match_id), '39', ['0']]
             # the results into the ladder; a failure must not keep the room waiting for FINAL_MATCH_RESULTS
             try:
+              # the host's client stayed to the end: its report settles a disagreement (a client that quits
+              # early reports itself as the winner)
+              match['finisher'] = clt
               ratings.match_finished(match)
             except Exception as err:
               print(f"Rating match {match_id} failed: {err!r}")
