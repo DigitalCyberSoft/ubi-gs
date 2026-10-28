@@ -193,6 +193,31 @@ class MatchStartTests(unittest.TestCase):
     for sub in ['34', '35', '44', '70']:
       self.assertIs(request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, [sub, ['1000']]), lobby.NO_REPLY)
 
+class ProtocolTests(unittest.TestCase):
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_lobby_server_login_id(self):
+    clt = make_client('alice')
+    # the second field is a flag, not the server id
+    res = request(clt, gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN, ['alice', '0', '192.168.0.41', '255.255.255.0', '0'])
+    self.assertEqual(res.dl.lst, ['210', ['1']])
+
+  def test_group_info_get_no_extra_reply(self):
+    clt = login('alice')
+    clt.conn.sent.clear()
+    self.assertIs(request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['9', ['1', '384']]), lobby.NO_REPLY)
+    self.assertEqual([m[0] for m in notifs(clt)], ['53'])
+
+  def test_ds_flags_any(self):
+    alice = login('alice')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    # OPEN only (0x2) carries the dsFlags value before max players
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x2 | 0x8), '16', '4']])
+    self.assertEqual(lobby.find_room(int(room_id)).gs_room.max_players, 4)
+
 class JoinOrderTests(unittest.TestCase):
   def setUp(self):
     lobby.g_clients.clear()

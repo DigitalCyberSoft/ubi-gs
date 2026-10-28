@@ -23,13 +23,6 @@ LOBBIES: list[group.Lobby] = [
 ]
 """Global list of available server lists."""
 
-def is_notification(req: gsm.Message):
-  """Messages the game expects no answer to, not even an echo.
-
-  `PROXY_HANDLER` with a list first, e.g. [['3', module id]], tells that a proxy module is ready (3) or failed (4);
-  the game keeps an echo as an unanswerable message that blocks all later proxy messages."""
-  return req.header.type == gsm.MESSAGE_TYPE.PROXY_HANDLER and isinstance(req.dl.lst[0], list)
-
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
   res = None
@@ -116,16 +109,12 @@ def handle_client(clt: client.TcpClient):
             if res:
               print(res)
               clt.conn.sendall(bytes(res))
-            elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(msg):
-              clt.conn.sendall(data)
         else:
           print(req)
           res = handle_req(clt, req)
           if res:
             print(res)
             clt.conn.sendall(bytes(res))
-          elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(req):
-            clt.conn.sendall(data)
       else:
         print("No more data from", clt.addr)
         break
