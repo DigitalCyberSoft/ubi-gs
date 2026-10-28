@@ -373,6 +373,9 @@ class GSMResponse:
           self.header.size = GSMSG_HEADER_SIZE + len(dl)
         case PROPERTY.GS_ENCRYPT:
           raise NotImplementedError("GS_ENCRYPT message serialization unsupported.")
+    else:
+      # no payload: just the header (a copied request header may say more)
+      self.header.size = GSMSG_HEADER_SIZE
 
     bts.extend(bytes(self.header))
     if dl is not None:
@@ -402,6 +405,9 @@ class GSMNotification:
           self.header.size = GSMSG_HEADER_SIZE + len(dl)
         case PROPERTY.GS_ENCRYPT:
           raise NotImplementedError("GS_ENCRYPT message serialization unsupported.")
+    else:
+      # no payload: just the header (a copied request header may say more)
+      self.header.size = GSMSG_HEADER_SIZE
 
     bts.extend(bytes(self.header))
     if dl is not None:
