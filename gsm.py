@@ -545,6 +545,29 @@ class LoginFriendsResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGINFRIENDS.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+class FriendsResponse(GSMResponse):
+  """Success response to friends service requests: GSSUCCESS [request type, data...] (0x004291a0, 0x00429240, 0x00429ce0)."""
+  def __init__(self, req: Message, data: list = []):
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSSUCCESS
+    self.dl = List([req.header.type.value.to_bytes(1, 'little')] + data)
+
+class FriendsFailResponse(GSMResponse):
+  """Failure response to friends service requests: GSFAIL [request type, [reason (u32 little-endian)]]."""
+  def __init__(self, req: Message, reason: int):
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSFAIL
+    self.dl = List([req.header.type.value.to_bytes(1, 'little'), [reason.to_bytes(4, 'little')]])
+
+def update_friend(name: str, online: bool):
+  """`UPDATEFRIEND` notification: [name, status, mood, ?, ?, ?] (0x00428c60); status 1 is online (0x00b210f0)."""
+  header = GSMessageHeader.from_params(PROPERTY.GS, 1, MESSAGE_TYPE.UPDATEFRIEND, SENDER_RECEIVER.R, SENDER_RECEIVER.P)
+  zero = (0).to_bytes(4, 'little')
+  data = [name, (1 if online else 0).to_bytes(4, 'little'), '', zero, zero, '']
+  return Message(None, header=header, dl=List(data))
+
 class StillAliveResponse(GSMResponse):
   """Response to `STILLALIVE` messages.
 

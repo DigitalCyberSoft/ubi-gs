@@ -236,3 +236,25 @@ def account_name(typed: str, ip: str) -> str:
   """The account name of the game at `ip` that logged in as `typed`; `typed` if there's no session."""
   account = session(typed, ip)
   return account.name if account else typed
+
+# friends
+
+def add_friend(account: Account, friend: Account):
+  with _transaction() as conn:
+    conn.execute('INSERT OR IGNORE INTO friends (account, friend) VALUES (?, ?)', (account.id, friend.id))
+
+def remove_friend(account: Account, friend: Account):
+  with _transaction() as conn:
+    conn.execute('DELETE FROM friends WHERE account = ? AND friend = ?', (account.id, friend.id))
+
+def friends(account: Account) -> list[Account]:
+  """The account's friends, by name."""
+  rows = _query('''SELECT accounts.id, accounts.name FROM friends JOIN accounts ON accounts.id = friends.friend
+    WHERE friends.account = ? ORDER BY accounts.name''', (account.id,))
+  return [Account(*row) for row in rows]
+
+def friend_of(account: Account) -> list[Account]:
+  """The accounts that have this one as a friend."""
+  rows = _query('''SELECT accounts.id, accounts.name FROM friends JOIN accounts ON accounts.id = friends.account
+    WHERE friends.friend = ?''', (account.id,))
+  return [Account(*row) for row in rows]

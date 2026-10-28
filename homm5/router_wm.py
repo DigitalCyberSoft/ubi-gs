@@ -30,6 +30,46 @@ def is_notification(req: gsm.Message):
   the game keeps an echo as an unanswerable message that blocks all later proxy messages."""
   return req.header.type == gsm.MESSAGE_TYPE.PROXY_HANDLER and isinstance(req.dl.lst[0], list)
 
+FRIEND_UNKNOWN = 1
+"""`ADDFRIEND` failure reason: no such player."""
+
+g_lock = threading.RLock()
+"""Guards sending to the clients, friend updates come from other players' threads."""
+
+def online(account: accounts.Account):
+  return any(c.account == account for c in CLIENTS)
+
+def send_notif(clt: client.TcpClient, msg: gsm.Message):
+  print(f'-> {clt.username} {msg}')
+  try:
+    gsm.GSMNotification(msg).send_tcp(clt)
+  except OSError as err:
+    print(f'failed to notify {clt.username}: {err}')
+
+def send_friend_list(clt: client.TcpClient):
+  """`UPDATEFRIEND` for each of the player's friends."""
+  if clt.account is None:
+    return
+  for friend in accounts.friends(clt.account):
+    send_notif(clt, gsm.update_friend(friend.name, online(friend)))
+
+def notify_friend_of(clt: client.TcpClient, is_online: bool):
+  """Tells the players who have this one as a friend that it came online or went offline."""
+  if clt.account is None:
+    return
+  others = set(accounts.friend_of(clt.account))
+  for other in CLIENTS:
+    if other is not clt and other.account in others:
+      send_notif(other, gsm.update_friend(clt.account.name, is_online))
+
+def send_response(clt: client.TcpClient, res: gsm.GSMResponse):
+  """Sends the response, then what must follow it (`res.after`)."""
+  print(res)
+  clt.conn.sendall(bytes(res))
+  after = getattr(res, 'after', None)
+  if after is not None:
+    after()
+
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
   res = None
@@ -40,10 +80,31 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.LOGINWAITMODULE:
       # the name typed at login; the router knows its account
-      clt.username = accounts.account_name(req.dl.lst[0], clt.addr[0])
+      clt.account = accounts.session(req.dl.lst[0], clt.addr[0])
+      clt.username = clt.account.name if clt.account else req.dl.lst[0]
       res = gsm.LoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.LOGINFRIENDS:
       res = gsm.LoginFriendsResponse(req)
+      # the friend list, and this player online for whoever has them as a friend
+      res.after = lambda: (send_friend_list(clt), notify_friend_of(clt, True))
+    case gsm.MESSAGE_TYPE.ADDFRIEND:
+      # [name, group, ?]
+      friend = accounts.find(req.dl.lst[0])
+      if clt.account is None or friend is None or friend == clt.account:
+        return gsm.FriendsFailResponse(req, FRIEND_UNKNOWN)
+      accounts.add_friend(clt.account, friend)
+      res = gsm.FriendsResponse(req, [friend.name])
+      # the game adds the friend to its list on this update, not on the reply
+      res.after = lambda: send_notif(clt, gsm.update_friend(friend.name, online(friend)))
+    case gsm.MESSAGE_TYPE.DELFRIEND:
+      # [name]
+      friend = accounts.find(req.dl.lst[0])
+      if clt.account is not None and friend is not None:
+        accounts.remove_friend(clt.account, friend)
+      res = gsm.FriendsResponse(req, [req.dl.lst[0]])
+    case gsm.MESSAGE_TYPE.FRIENDLIST:
+      res = gsm.FriendsResponse(req)
+      res.after = lambda: send_friend_list(clt)
     case gsm.MESSAGE_TYPE.PROXY_HANDLER:
       if str(type(req.dl.lst[0])) == "<class 'list'>":
         pass
@@ -113,26 +174,29 @@ def handle_client(clt: client.TcpClient):
           print(bundle)
           for msg in bundle.msgs:
             print(msg)
-            res = handle_req(clt, msg)
-            if res:
-              print(res)
-              clt.conn.sendall(bytes(res))
-            elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(msg):
+            with g_lock:
+              res = handle_req(clt, msg)
+              if res:
+                send_response(clt, res)
+            if not res and req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(msg):
               clt.conn.sendall(data)
         else:
           print(req)
-          res = handle_req(clt, req)
-          if res:
-            print(res)
-            clt.conn.sendall(bytes(res))
-          elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(req):
+          with g_lock:
+            res = handle_req(clt, req)
+            if res:
+              send_response(clt, res)
+          if not res and req.header.type != gsm.MESSAGE_TYPE.STILLALIVE and not is_notification(req):
             clt.conn.sendall(data)
       else:
         print("No more data from", clt.addr)
         break
   finally:
     clt.conn.close()
-    CLIENTS.remove(clt)
+    with g_lock:
+      CLIENTS.remove(clt)
+      if clt.account is not None and not online(clt.account):
+        notify_friend_of(clt, False)
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
