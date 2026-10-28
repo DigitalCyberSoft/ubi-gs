@@ -137,7 +137,8 @@ class H5_PlayerInfo:
             
       field = H5_Stream(buf)
       cur_idx = 2
-      if field.id == cur_idx and field.size > 0:
+      # empty for player slots nobody took yet
+      if field.id == cur_idx:
         self.username = field.data.decode("utf-8")
       else:
         raise ValueError(f"PlayerInfo: missing/invalid field - Username ({cur_idx})")

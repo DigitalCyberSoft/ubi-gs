@@ -117,6 +117,26 @@ class H5_SerializerTests(unittest.TestCase):
     output = h5_data.H5_Serializer().serialize_roominfo(info)
     self.assertEqual(input, output)
 
+class H5_PlayerInfoTests(unittest.TestCase):
+  """Tests for `PlayerInfo` structures of `RoomInfo`."""
+  def test_empty_slot(self):
+    # a player slot without a player, sent by the host of a 2-player map
+    buf = bytes.fromhex("02 00 03 24 02 20" + " 00" * 16 + " 04 2c 02 04 00 00 03 20" + " 00" * 16 + " 05 08 00 00 00 00")
+    info = h5_data.H5_PlayerInfo(buf)
+    self.assertEqual(info.username, "")
+    self.assertEqual(info.local_port, 0)
+    self.assertEqual(info.serialize(), buf)
+
+  def test_player(self):
+    buf = bytes.fromhex("02 0a 61 6c 69 63 65 03 24 02 20 02 00 22 b8 7f 00 00 01" + " 00" * 8 + " 04 2c 02 04 b8 22 03 20 c0 a8 00 29" + " 00" * 12 + " 05 08 ff ff ff ff")
+    info = h5_data.H5_PlayerInfo(buf)
+    self.assertEqual(info.username, "alice")
+    self.assertEqual(info.ext_ip.ip, "127.0.0.1")
+    self.assertEqual(info.ext_ip.port, 8888)
+    self.assertEqual(info.local_port, 8888)
+    self.assertEqual(info.local_ip.ip, "192.168.0.41")
+    self.assertEqual(info.serialize(), buf)
+
 class H5_IPTests(unittest.TestCase):
   """Tests for address structures of `RoomInfo` and `PlayerInfo`."""
   def test_sockaddr_in(self):
