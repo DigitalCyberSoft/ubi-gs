@@ -135,16 +135,20 @@ class SRPSegment:
     return bytes(result)
   
 class SRPResponse:
-  """SRP response."""
-  def __init__(self, req: SRPRequest, clt: client.NatClient, port = 8888, type = gsm.NAT_MSG.PORT_ID):
+  """SRP response.
+
+  Without `req`, the segment is sent on the server's initiative and acknowledges the last segment received from the client."""
+  def __init__(self, req: SRPRequest | None, clt: client.NatClient, msg: gsm.GSMResponse = None):
+    window_req = req is not None and req.segment.window is not None
     # save window data on SYN
-    if req.segment.window is not None:
+    if window_req:
       clt.checksum_init = req.segment.window.checksum_init_val
       clt.sender_sig = req.segment.window.sender_sig
+    if req is not None:
+      clt.last_segment = req.segment.header.seg
     # msg
-    self.msg = None
-    if req.segment.msg is not None:
-      self.msg = gsm.NatResponse(req.segment.msg, type, clt, port)
+    self.msg = msg
+    if self.msg:
       msg = bytes(self.msg)
     # header  
     checksum = write_u16(clt.checksum_init)
@@ -154,17 +158,17 @@ class SRPResponse:
       size = len(msg)
     data_size = write_u16(size)
     flags = SRPHeaderFlags.SRP_ID.value | SRPHeaderFlags.ACK.value
-    if SRPHeaderFlags.SYN.name in req.segment.header.flags:
+    if req is not None and SRPHeaderFlags.SYN.name in req.segment.header.flags:
       flags |= SRPHeaderFlags.SYN.value
     flags = write_u16(flags)
     seg = write_u16(clt.segment_id)
     clt.segment_id += 1
-    ack = write_u16(req.segment.header.seg)
+    ack = write_u16(clt.last_segment)
     header = bytearray(checksum + signature + data_size + flags + seg + ack)
     self.header = SRPHeader(bytes(header))
     # window
     self.window = None
-    if req.segment.window is not None:
+    if window_req:
       tail = write_u16(10)
       sender_sig = write_u16(2)
       checksum_init = write_u16(0)
@@ -208,8 +212,8 @@ class SRPResponse:
     odd_len = len(data) % 2 == 1
     
     if odd_len:
-      # Add the first byte as extra
-      check_base += data[0]
+      # Add the first byte as extra, sign-extended like the game's `char`
+      check_base += data[0] if data[0] < 0x80 else data[0] - 0x100
       trunc_pos += 1
 
     if half_len > 0:
@@ -217,6 +221,8 @@ class SRPResponse:
         check_base += struct.unpack_from('<H', data, trunc_pos)[0]
         trunc_pos += 2
         
+    # 32-bit accumulator
+    check_base &= 0xFFFFFFFF
     checksum = check_base & 0xFFFF
     checksum += check_base >> 16
     checksum += checksum >> 16

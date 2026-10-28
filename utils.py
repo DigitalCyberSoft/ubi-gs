@@ -86,8 +86,19 @@ def ipv4_to_u32(ip: str):
   result = socket.inet_aton(ip)
   return read_u32(result)
 
+def ipv4_to_u32_be(ip: str):
+  """Converts IPv4 address into host-order integer representation (127.0.0.1 -> 0x7F000001)."""
+  return read_u32_be(socket.inet_aton(ip))
+
 def read_ipv4(ip: bytes):
   """Reads IPv4 address from a network buffer (LE)."""
   if len(ip) != 4:
     raise BufferError("Invalid IPv4 address buffer size")
   return socket.inet_ntoa(ip[::-1])
+
+def cap(text: str, size: int):
+  """Cuts `text` so its UTF-8 encoding plus a terminator fits a `size`-byte buffer of the game, on a character boundary."""
+  data = text.encode('utf8')
+  if len(data) < size:
+    return text
+  return data[:size - 1].decode('utf8', errors='ignore')

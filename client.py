@@ -11,6 +11,21 @@ class TcpClient:
     self.game_bf_key: bytes = None
     self.sv_bf_key: bytes = None
     self.username: str = None
+    self.account = None
+    """`accounts.Account` after a router login."""
+    self.typed_name: str = None
+    """The name the player typed at login, which the game keeps as its own (`username` is the account name)."""
+    """`accounts.Account` after a router login."""
+    self.local_ip: str = None
+    """Local (private) IPv4 reported at lobby login."""
+    self.lobby_id: int = None
+    """Lobby the client is in."""
+    self.room_id: int = None
+    """Room the client is in."""
+    self.is_visitor = False
+    """The client is a visitor (spectator) of its room."""
+    self.player_info = b''
+    """Player data the client set with `LOBBY_MSG.SET_PLAYER_INFO`."""
 
 class UdpClient:
   """Connected game client."""
@@ -25,7 +40,19 @@ class NatClient(UdpClient):
     self.checksum_init = checksum_init
     self.sender_sig = sender_sig
     self.segment_id = 0
+    self.last_segment = 0
+    """Id of the last client segment acknowledged by the server."""
+    self.ping_id: int = None
+    """Id the game puts in its NAT pings, see `gsm.NAT_MSG.PORT_ID`."""
+    self.nat_req = None
+    """The game's NAT address request (`gsm.Message`), answered on every ping."""
+    self.last_seen = 0.0
+    """`time.monotonic()` of the last packet from the client."""
 
   def find(addr: tuple[str, int], clients: list[typing.Self]):
     """Searches for the address in the list and returns the client if found."""
     return next((cl for cl in clients if cl.addr == addr[0] and cl.port == addr[1]), None)
+
+  def find_by_ping(ping_id: int, clients: list[typing.Self]):
+    """Searches for the NAT ping id in the list and returns the client if found."""
+    return next((cl for cl in clients if cl.ping_id == ping_id), None)

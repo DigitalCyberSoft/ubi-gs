@@ -1,16 +1,12 @@
-import os, platform, re
+import argparse, os, re, sys
 from flask import Flask, request, send_from_directory, abort, Response
 
 app = Flask(__name__)
 
-# config for game file directories 
-cur_dir = os.getcwd()
-if platform.system() == "Windows":
-    app.config['HOMM5'] = f'{cur_dir}\\static\\homm5'
-    app.config['SP3'] = f'{cur_dir}\\static\\sp3'
-else:
-    app.config['HOMM5'] = f'{cur_dir}/static/homm5'
-    app.config['SP3'] = f'{cur_dir}/static/sp3'
+# config for game file directories, next to this script
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+app.config['HOMM5'] = os.path.join(static_dir, 'homm5')
+app.config['SP3'] = os.path.join(static_dir, 'sp3')
 
 @app.route('/<php_filename>', methods=['GET'])
 def get(php_filename: str) -> Response:
@@ -19,6 +15,8 @@ def get(php_filename: str) -> Response:
     dp = request.args.get('dp')
     game = None
     ini_file = None
+    if dp is None:
+        return 'Missing game id', 400
 
     # remove HoMM5 hash
     if re.search("^HEROES_[a-f0-9]{16}$", dp) is not None:
@@ -57,6 +55,15 @@ def get(php_filename: str) -> Response:
             case _:
                 print('Unknown game id')
                 return 'Unknown game id', 400
+        host = services_host()
+        if game == 'HOMM5' and host:
+            # the game services' address: wherever this request arrived, as the services do (homm5/h5.py)
+            try:
+                with open(os.path.join(app.config[game], ini_file), encoding='ascii') as file:
+                    ini = re.sub(r'(?m)^(\w+IP\d+)=.*$', lambda m: f'{m.group(1)}={host}', file.read())
+            except FileNotFoundError:
+                abort(404)
+            return Response(ini, mimetype='application/octet-stream', headers={'Content-Disposition': f'attachment; filename={ini_file}'})
         try:
             return send_from_directory(directory=app.config[game], path=ini_file, as_attachment=True)
         except FileNotFoundError:
@@ -65,5 +72,33 @@ def get(php_filename: str) -> Response:
         print(f'Unknown request for {php_filename}')
         return 'Unknown request', 400
 
+def services_host():
+    """UBIGS_HOST, else the local address the request arrived on; None keeps the file's addresses."""
+    host = os.environ.get('UBIGS_HOST')
+    if host:
+        return host
+    sock = request.environ.get('werkzeug.socket')
+    if sock is not None:
+        try:
+            return sock.getsockname()[0]
+        except OSError:
+            pass
+    return None
+
+def get_args():
+    parser = argparse.ArgumentParser(description='gsconnect.ubisoft.com web service')
+    parser.add_argument('--host', default=os.environ.get('GSCONNECT_HOST', '0.0.0.0'),
+        help='address to listen on (default 0.0.0.0, env GSCONNECT_HOST)')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('GSCONNECT_PORT', '80')),
+        help='port to listen on (default 80, env GSCONNECT_PORT)')
+    # never in public: the debugger console runs code
+    parser.add_argument('--debug', action='store_true', help='Flask debug mode, local testing only')
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=True)
+    args = get_args()
+    # a clear message and exit code if the port can't be opened (Flask would print a bare error)
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    import ports
+    ports.check_bind('gsconnect', 'tcp', (args.host, args.port))
+    app.run(host=args.host, port=args.port, debug=args.debug)

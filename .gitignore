@@ -21,3 +21,6 @@ nupkg/
 !requirements.txt
 *.bin
 *.config
+
+# accounts database (accounts.py)
+ubigs.db*

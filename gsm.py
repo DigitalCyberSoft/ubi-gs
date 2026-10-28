@@ -1,3 +1,5 @@
+from copy import copy
+from ctypes import c_int32
 from enum import Enum
 import blowfish, gsxor, pkc, client, utils
 from client import TcpClient
@@ -167,11 +169,15 @@ class LOBBY_MSG(Enum):
   GAME_READY = 33
   GAME_CONNECTED = 34
   """Client-side notification, no response needed."""
+  GAME_FINISH = 35
+  """Client-side notification at the end of an unrated game, no response needed."""
   PLAYER_BAN = 36
   PLAYER_UNBAN = 40
   UPDATE_GAME_INFO = 41
   SET_PLAYER_INFO = 42
   LOBBY_DISCONNECT_ALL = 43
+  PLAYER_MATCH_STARTED = 44
+  """Client-side notification after MATCH_STARTED, no response needed."""
   MATCH_FINISH = 45
   GET_ALT_GROUP_INFO = 46
   MEMBER_JOIN = 50
@@ -189,6 +195,8 @@ class LOBBY_MSG(Enum):
   MATCH_READY = 65
   PLAYER_INFO_UPDATE = 66
   PLAYER_UPDATE_STATUS = 69
+  PLAYER_MATCH_FINISHED = 70
+  """Client-side notification after SUBMIT_MATCH, no response needed."""
   FINAL_MATCH_RESULTS = 71
   PLAYER_GROUP_GET = 106
   CHANGE_REQUESTED_LOBBIES = 109
@@ -262,8 +270,12 @@ class Message:
   def __init__(self, bf_key: bytes, in_buf: bytes = None, header: GSMessageHeader = None, dl: List = None):
     if header is None and in_buf is None:
       raise ValueError("Insufficient parameters for message construction.")
+    if in_buf is not None and len(in_buf) < GSMSG_HEADER_SIZE:
+      raise BufferError(f"Message shorter than its header ({len(in_buf)}B).")
     self.header = header if header is not None else GSMessageHeader(in_buf[:GSMSG_HEADER_SIZE])
     """GSM protocol header."""
+    if in_buf is not None and self.header.size < GSMSG_HEADER_SIZE:
+      raise BufferError(f"Message size {self.header.size}B is below the header size.")
     self.dl = dl
     """DataList with payload data."""
     # client request
@@ -288,8 +300,16 @@ class Message:
         self.dl: List = List.from_buf(bytearray(dec))
 
   def __repr__(self):
-    payload = self.dl or ""
+    payload = self.redacted() or ""
     return f"<{self.header.type.name}\t{self.header.property.name}\t{self.header.sender.name}->{self.header.receiver.name}\t{self.header.size}B>\n{payload}"
+
+  def redacted(self):
+    """Payload for logs, without passwords (router `LOGIN`: username, password, game id, ...)."""
+    if self.dl is None:
+      return None
+    if self.header.type == MESSAGE_TYPE.LOGIN and len(self.dl.lst) >= 3:
+      return List([self.dl.lst[0], '<password>'] + self.dl.lst[2:])
+    return self.dl
 
 class GSMessageBundle:
   """Packet containing 2 or more GS messages."""
@@ -309,7 +329,8 @@ class GSMessageBundle:
 class GSMResponse:
   """Base class for GS message responses."""
   def __init__(self, req: Message):
-    self.header = req.header
+    # a copy, the same request can be answered more than once
+    self.header = copy(req.header)
     self.header.sender, self.header.receiver = self.header.receiver, self.header.sender
     self.dl: List = None
 
@@ -406,6 +427,17 @@ class LoginResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGIN.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+class LoginFailResponse(GSMResponse):
+  """Refusal of a `LOGIN`: GSFAIL [b'f', [reason (u32 little-endian)]], read by the game at 0x00428ea0."""
+  def __init__(self, req: Message, reason: int):
+    if req.header.type != MESSAGE_TYPE.LOGIN:
+      raise TypeError(f"LoginFailResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSFAIL
+    msg_id = MESSAGE_TYPE.LOGIN.value
+    self.dl = List([msg_id.to_bytes(1, 'little'), [reason.to_bytes(4, 'little')]])
+
 class JoinWaitModuleResponse(GSMResponse):
   """Response to `JOINWAITMODULE` messages."""
   def __init__(self, req: Message, wait_module: tuple[str, int]):
@@ -428,6 +460,12 @@ class LoginWaitModuleResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGINWAITMODULE.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+PLAYERINFO_SIZES = [12, 16, 36, 36, 68, 132, 132]
+"""Sizes of the game's buffers for the `PLAYERINFO` strings, terminator included."""
+
+USERNAME_SIZE = 16
+"""Size of the game's username buffers (`JOINWAITMODULE` reply, 0x0043f450), terminator included."""
+
 class PlayerInfoResponse(GSMResponse):
   """Response to `PLAYERINFO` messages."""
   def __init__(self, req: Message, user: str):
@@ -439,6 +477,8 @@ class PlayerInfoResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.PLAYERINFO.value
     nick = real_name = user
     player_data = [nick, real_name, 'findme3', 'findme4', 'findme5', 'findme6', 'findme7']
+    # the game copies these without a limit into fixed buffers (0x0042a990)
+    player_data = [utils.cap(field, size) for field, size in zip(player_data, PLAYERINFO_SIZES)]
     self.dl = List([msg_id.to_bytes(1, 'little'), player_data])
 
 class ProxyHandlerResponse(GSMResponse):
@@ -495,7 +535,7 @@ class ProxyJoinWaitModuleResponse(GSMResponse):
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.GSSUCCESS
     msg_id = MESSAGE_TYPE.JOINWAITMODULE.value
-    self.dl = List([msg_id.to_bytes(1, 'little'), [user, wait_module[0], str(wait_module[1])]])
+    self.dl = List([msg_id.to_bytes(1, 'little'), [utils.cap(user, USERNAME_SIZE), wait_module[0], str(wait_module[1])]])
 
 class ProxyLoginWaitModuleResponse(GSMResponse):
   """Response to `LOGINWAITMODULE` messages for proxy WM."""
@@ -518,6 +558,44 @@ class LoginFriendsResponse(GSMResponse):
     self.header.type = MESSAGE_TYPE.GSSUCCESS
     msg_id = MESSAGE_TYPE.LOGINFRIENDS.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
+
+class FriendsResponse(GSMResponse):
+  """Success response to friends service requests: GSSUCCESS [request type, data...] (0x004291a0, 0x00429240, 0x00429ce0)."""
+  def __init__(self, req: Message, data: list = []):
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSSUCCESS
+    self.dl = List([req.header.type.value.to_bytes(1, 'little')] + data)
+
+class FriendsFailResponse(GSMResponse):
+  """Failure response to friends service requests: GSFAIL [request type, [reason (u32 little-endian)]]."""
+  def __init__(self, req: Message, reason: int):
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.GSFAIL
+    self.dl = List([req.header.type.value.to_bytes(1, 'little'), [reason.to_bytes(4, 'little')]])
+
+FRIEND_ONLINE = 0
+FRIEND_OFFLINE = 1
+"""`UPDATEFRIEND` status: the game keeps (status == 1) per friend (0x00b210f0) and draws such a friend disabled (0x009d7610)."""
+
+def update_friend(name: str, online: bool):
+  """`UPDATEFRIEND` notification: [name, status, mood, ?, ?, ?] (0x00428c60)."""
+  header = GSMessageHeader.from_params(PROPERTY.GS, 1, MESSAGE_TYPE.UPDATEFRIEND, SENDER_RECEIVER.R, SENDER_RECEIVER.P)
+  zero = (0).to_bytes(4, 'little')
+  status = FRIEND_ONLINE if online else FRIEND_OFFLINE
+  data = [name, status.to_bytes(4, 'little'), '', zero, zero, '']
+  return Message(None, header=header, dl=List(data))
+
+class StillAliveResponse(GSMResponse):
+  """Response to `STILLALIVE` messages.
+
+  The game sends a keepalive every 30 seconds of its own silence and drops the connection when nothing arrives from the server for 105 seconds."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.STILLALIVE:
+      raise TypeError(f"StillAliveResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
 
 class LobbyMsgResponse(GSMResponse):
   """Response to `LOBBY_MSG` messages."""
@@ -570,15 +648,15 @@ class JoinLobbyServerResponse(GSMResponse):
 
 class LobbyServerLoginResponse(GSMResponse):
   """Response to `LOBBYSERVERLOGIN` messages."""
-  def __init__(self, req: Message):
+  def __init__(self, req: Message, server_id: int = 1):
     if req.header.type != MESSAGE_TYPE.LOBBYSERVERLOGIN:
       raise TypeError(f"LobbyServerLoginResponse constructed from {req.header.type} request.")
     super().__init__(req)
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.GSSUCCESS
     result = str(MESSAGE_TYPE.LOBBYSERVERLOGIN.value)
-    server_id = req.dl.lst[1]
-    self.dl = List([result, [server_id]])
+    # the request's second field is a flag, the reply carries this lobby server's id
+    self.dl = List([result, [str(server_id)]])
 
 class JoinLobbyResponse(GSMResponse):
   """Response to `LOBBY_MSG.JOIN_LOBBY` messages."""
@@ -596,16 +674,18 @@ class JoinLobbyResponse(GSMResponse):
     self.dl = List([result, [subtype, [group_id]]])
 
 class NatResponse(GSMResponse):
-  """Response to `NAT` messages."""
-  def __init__(self, req: Message, subtype: NAT_MSG, clt: client.NatClient, port: int):
+  """Response to `NAT` messages.
+
+  `PORT_ID` tells the game where to send its NAT pings and the 4-byte id to put in them (`ip`), `ADDRESS` is the game's public address as seen in its pings.
+  The game reads `ip` as a host-order integer (127.0.0.1 is 0x7F000001) with `atoi`, so it is sent signed to keep the upper half of the range."""
+  def __init__(self, req: Message, subtype: NAT_MSG, ip: int, port: int):
     if req.header.type != MESSAGE_TYPE.NAT:
       raise TypeError(f"NatResponse constructed from {req.header.type} request.")
     super().__init__(req)
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.NAT
     socketId = req.dl.lst[1][0]
-    ip = str(utils.ipv4_to_u32(clt.addr))
-    self.dl = List([str(subtype.value), [socketId, ip, str(port)]])
+    self.dl = List([str(subtype.value), [socketId, str(c_int32(ip).value), str(port)]])
 
 class GetGroupInfoResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_INFO_GET` messages.
@@ -676,6 +756,41 @@ class JoinRoomResponse(GSMResponse):
     gs_version = req.dl.lst[1][4]
     self.dl = List([result, [subtype, [group_id]]])
 
+class LobbyResultResponse(GSMResponse):
+  """Plain success response to `LOBBY_MSG` requests (result, [subtype])."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"LobbyResultResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSSUCCESS.value)
+    self.dl = List([result, [req.dl.lst[0]]])
+
+class LobbyGroupResponse(GSMResponse):
+  """Plain success response to `LOBBY_MSG` requests about a group: [result, [subtype, [group id]]]."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"LobbyGroupResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSSUCCESS.value)
+    self.dl = List([result, [req.dl.lst[0], [req.dl.lst[1][0]]]])
+
+class GroupLeaveResponse(GSMResponse):
+  """Response to `LOBBY_MSG.GROUP_LEAVE` messages."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"GroupLeaveResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSSUCCESS.value)
+    subtype = str(LOBBY_MSG.GROUP_LEAVE.value)
+    group_id = req.dl.lst[1][0]
+    self.dl = List([result, [subtype, [group_id]]])
+
 class GroupConfigUpdateResultResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_CONFIG_UPDATE_RES` messages."""
   def __init__(self, req: Message, room: H5_Room):
@@ -691,7 +806,8 @@ class GroupConfigUpdateResultResponse(GSMResponse):
     flags = int(req.dl.lst[1][1])
     # list iterator
     idx = 2
-    if flags & ROOM_UPDATE_FLAGS.DS_FLAGS.value == ROOM_UPDATE_FLAGS.DS_FLAGS.value:
+    # any of the dedicated server flags
+    if flags & ROOM_UPDATE_FLAGS.DS_FLAGS.value:
       # see group.DS_ROOM_UPDATE_FLAGS for details
       ds_flags = int(req.dl.lst[1][idx])
       idx += 1

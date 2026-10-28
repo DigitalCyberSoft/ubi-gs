@@ -1,7 +1,9 @@
-import socket, sys, os
+import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import limits
+import ports
 import gsm, pkc, client, h5
 
 SERVER_ADDRESS = h5.ENDPOINTS["proxy"]
@@ -18,9 +20,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
   res = None
   match req.header.type:
     case gsm.MESSAGE_TYPE.STILLALIVE:
-      pass
+      res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.JOINWAITMODULE:
-      res = gsm.ProxyJoinWaitModuleResponse(req, WAIT_MODULE, clt.username)
+      res = gsm.ProxyJoinWaitModuleResponse(req, h5.advertised(WAIT_MODULE, clt.conn), clt.username)
     case gsm.MESSAGE_TYPE.LOGIN:
       # todo: actual user auth here
       clt.username = req.dl.lst[0]
@@ -45,34 +47,38 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       raise NotImplementedError(f"No request handler for {req.header.type.name} messages.")
   return res
 
+def handle_client(clt: client.TcpClient):
+  """Serves a connected game client until it disconnects."""
+  try:
+    while True:
+      data = clt.conn.recv(4096)
+      if data:
+        req = gsm.Message(clt.sv_bf_key, in_buf=data)
+        print(req)
+        res = handle_req(clt, req)
+        if res:
+          print(res)
+          clt.conn.sendall(bytes(res))
+      else:
+        print("No more data from", clt.addr)
+        break
+  finally:
+    clt.conn.close()
+    CLIENTS.remove(clt)
+
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  ports.bind(sock, SERVER_ADDRESS, "proxy")
   print(f"Proxy service is listening on port {SERVER_ADDRESS[1]}")
-  sock.bind(SERVER_ADDRESS)
   sock.listen(5)
     
   while True:
     clt = client.TcpClient(sock.accept())
+    if not limits.TCP.admit(clt):
+      continue
     CLIENTS.append(clt)
     print(f"Connection from {clt.addr}")
-    try:
-      while True:
-        data = clt.conn.recv(4096)
-        if data:
-          req = gsm.Message(clt.sv_bf_key, in_buf=data)
-          print(req)
-          res = handle_req(clt, req)
-          if res:
-            print(res)
-            clt.conn.sendall(bytes(res))
-          elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
-            clt.conn.sendall(data)
-        else:
-          print("No more data from", clt.addr)
-          break
-    finally:
-      clt.conn.close()
-      CLIENTS.remove(clt)
+    threading.Thread(target=limits.TCP.serve, args=(handle_client, clt), daemon=True).start()
 
 if __name__ == "__main__":
     start_server()
