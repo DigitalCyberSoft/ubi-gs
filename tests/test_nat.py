@@ -146,6 +146,14 @@ class NatServerTests(unittest.TestCase):
     res = srp.SRPRequest(packets[0][0])
     self.assertEqual(res.segment.msg.dl.lst, ['3', ['1', str(0x7F000001), '8888']])
 
+  def test_fin_with_window_from_unknown_address(self):
+    # found by fuzzing the Go port: no client, nothing to answer, no exception (#60)
+    window = struct.pack('<HHHH', 10, SENDER_SIG, CHECKSUM_INIT, 0x218)
+    fin = make_segment(srp.SRPHeaderFlags.FIN.value | srp.SRPHeaderFlags.SYN.value, 0, 0, window)
+    self.assertEqual(gsnat.handle_packet(fin, self.GAME, 0.0), [])
+    self.assertEqual(gsnat.handle_packet(make_segment(srp.SRPHeaderFlags.FIN.value, 1, 0, make_nat_request('1')), self.GAME, 0.0), [])
+    self.assertEqual(gsnat.CLIENTS, [])
+
   def test_unknown_ping(self):
     ping_id = self.connect(0.0)
     self.assertEqual(gsnat.handle_packet(struct.pack('>I', ping_id ^ 1), self.GAME_PORT, 1.0), [])
