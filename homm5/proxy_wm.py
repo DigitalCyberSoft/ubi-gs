@@ -10,6 +10,9 @@ SERVER_ADDRESS = h5.ENDPOINTS["proxy_wm"]
 CLIENTS: list[client.TcpClient] = []
 """Global list of connected game clients."""
 
+class ModuleUnavailable(Exception):
+  """A proxy module request this server has no service for."""
+
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
   res = None
@@ -19,6 +22,10 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
     case gsm.MESSAGE_TYPE.LOGINWAITMODULE:
       clt.username = req.dl.lst[0]
       res = gsm.ProxyLoginWaitModuleResponse(req)
+    case gsm.MESSAGE_TYPE.PROXY_HANDLER:
+      # module requests (e.g. ladder queries, 1281): closing the module's connection fails them,
+      # then the game carries on (it sends its LOBBY_MSG.SET_PLAYER_INFO without ladder data)
+      raise ModuleUnavailable(req.dl.lst[0])
     case gsm.MESSAGE_TYPE.KEY_EXCHANGE:
       match req.dl.lst[0]:
         case '1':
@@ -68,6 +75,8 @@ def handle_client(clt: client.TcpClient):
       else:
         print("No more data from", clt.addr)
         break
+  except ModuleUnavailable as err:
+    print(f"No service for module request {err}, closing")
   finally:
     clt.conn.close()
     CLIENTS.remove(clt)
