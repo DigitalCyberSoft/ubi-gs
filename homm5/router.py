@@ -22,7 +22,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
     case gsm.MESSAGE_TYPE.STILLALIVE:
       res = gsm.StillAliveResponse(req)
     case gsm.MESSAGE_TYPE.JOINWAITMODULE:
-      res = gsm.JoinWaitModuleResponse(req, WAIT_MODULE)
+      res = gsm.JoinWaitModuleResponse(req, h5.advertised(WAIT_MODULE, clt.conn))
     case gsm.MESSAGE_TYPE.LOGIN:
       # todo: actual user auth here
       clt.username = req.dl.lst[0]
