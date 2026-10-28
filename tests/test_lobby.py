@@ -312,11 +312,18 @@ class RatedLadderTests(unittest.TestCase):
     a = self.stats(self.alice)
     self.assertEqual((a['RATING'], a['GAMES_PLAYED'], a['MAX_WINS_STREAK']), (1531, 2, 2))
 
-  def test_disputed_not_rated(self):
-    # each claims the win
+  def test_disagreement_settled_by_the_host(self):
+    # each claims the win (a client that quits early reports itself as the winner): the host's report,
+    # sent by the client that finished the match, counts
     self.play('1', '0')
-    self.assertEqual(self.stats(self.alice), {})
-    self.assertEqual(self.stats(self.bob), {})
+    a, b = self.stats(self.alice), self.stats(self.bob)
+    self.assertEqual((a['WINS'], b['LOSSES'], a['RATING'], b['RATING']), (1, 1, 1516, 1484))
+
+  def test_disagreement_without_the_finisher_not_rated(self):
+    import ratings
+    self.assertIsNone(ratings.settled({'x': ['1'], 'y': ['0']}, 'z'))
+    self.assertEqual(ratings.settled({'x': ['1'], 'y': ['1']}, 'z'), ['1'])
+    self.assertEqual(ratings.settled({'x': ['1'], 'y': ['0']}, 'y'), ['0'])
 
 class RatingsTests(unittest.TestCase):
   def test_apply(self):
