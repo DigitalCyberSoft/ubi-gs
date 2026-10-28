@@ -95,3 +95,10 @@ def read_ipv4(ip: bytes):
   if len(ip) != 4:
     raise BufferError("Invalid IPv4 address buffer size")
   return socket.inet_ntoa(ip[::-1])
+
+def cap(text: str, size: int):
+  """Cuts `text` so its UTF-8 encoding plus a terminator fits a `size`-byte buffer of the game, on a character boundary."""
+  data = text.encode('utf8')
+  if len(data) < size:
+    return text
+  return data[:size - 1].decode('utf8', errors='ignore')

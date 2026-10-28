@@ -443,6 +443,12 @@ class LoginWaitModuleResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.LOGINWAITMODULE.value
     self.dl = List([msg_id.to_bytes(1, 'little')])
 
+PLAYERINFO_SIZES = [12, 16, 36, 36, 68, 132, 132]
+"""Sizes of the game's buffers for the `PLAYERINFO` strings, terminator included."""
+
+USERNAME_SIZE = 16
+"""Size of the game's username buffers (`JOINWAITMODULE` reply, 0x0043f450), terminator included."""
+
 class PlayerInfoResponse(GSMResponse):
   """Response to `PLAYERINFO` messages."""
   def __init__(self, req: Message, user: str):
@@ -454,6 +460,8 @@ class PlayerInfoResponse(GSMResponse):
     msg_id = MESSAGE_TYPE.PLAYERINFO.value
     nick = real_name = user
     player_data = [nick, real_name, 'findme3', 'findme4', 'findme5', 'findme6', 'findme7']
+    # the game copies these without a limit into fixed buffers (0x0042a990)
+    player_data = [utils.cap(field, size) for field, size in zip(player_data, PLAYERINFO_SIZES)]
     self.dl = List([msg_id.to_bytes(1, 'little'), player_data])
 
 class ProxyHandlerResponse(GSMResponse):
@@ -510,7 +518,7 @@ class ProxyJoinWaitModuleResponse(GSMResponse):
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.GSSUCCESS
     msg_id = MESSAGE_TYPE.JOINWAITMODULE.value
-    self.dl = List([msg_id.to_bytes(1, 'little'), [user, wait_module[0], str(wait_module[1])]])
+    self.dl = List([msg_id.to_bytes(1, 'little'), [utils.cap(user, USERNAME_SIZE), wait_module[0], str(wait_module[1])]])
 
 class ProxyLoginWaitModuleResponse(GSMResponse):
   """Response to `LOGINWAITMODULE` messages for proxy WM."""

@@ -63,5 +63,22 @@ class RedactionTests(unittest.TestCase):
     self.assertIn('alice', text)
     self.assertNotIn('secret', text)
 
+class LengthCapTests(unittest.TestCase):
+  """Strings relayed to the game fit its fixed buffers."""
+  def test_playerinfo(self):
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.PLAYERINFO, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['averyveryverylongname']))))
+    res = gsm.PlayerInfoResponse(gsm.Message(None, in_buf=buf), 'averyveryverylongname')
+    fields = res.dl.lst[1]
+    for field, size in zip(fields, gsm.PLAYERINFO_SIZES):
+      self.assertLess(len(field.encode('utf8')), size)
+    self.assertEqual(fields[0], 'averyveryve')
+
+  def test_cap_character_boundary(self):
+    import utils
+    # 'é' is 2 bytes; never cut it in half
+    self.assertEqual(utils.cap('ééééééé', 12), 'ééééé')
+    self.assertEqual(utils.cap('short', 12), 'short')
+
 if __name__ == '__main__':
   unittest.main()
