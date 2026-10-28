@@ -19,6 +19,8 @@ class TcpClient:
     """Room the client is in."""
     self.is_visitor = False
     """The client is a visitor (spectator) of its room."""
+    self.player_info = b''
+    """Player data the client set with `LOBBY_MSG.SET_PLAYER_INFO`."""
 
 class UdpClient:
   """Connected game client."""

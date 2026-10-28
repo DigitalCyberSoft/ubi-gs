@@ -55,8 +55,7 @@ def member_info(member: client.TcpClient, group_id: int):
   info.is_visitor = member.is_visitor
   info.ip_addr = member.addr[0]
   info.alt_ip_addr = member.local_ip or member.addr[0]
-  # the game's own player data travels in the room info buffer
-  info.player_info = b''
+  info.player_info = member.player_info
   if find_room(group_id) is not None:
     info.status = int(PLAYER_STATUS.PS_GAMECONNECTED.value)
   else:
@@ -210,6 +209,13 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           room.room_info = H5_Serializer().deserialize_roominfo(room.gs_room.group_info)
           # GROUP_INFO notifications
           send_room_update(room)
+        case gsm.LOBBY_MSG.SET_PLAYER_INFO:
+          # the game's own player data (ladder info), attached to its member info
+          clt.player_info = bytes(req.dl.lst[1][0])
+          res = gsm.LobbyResultResponse(req)
+          for member in lobby_members(clt.lobby_id):
+            if member is not clt:
+              send_notif(member, gsm.LOBBY_MSG.PLAYER_INFO_UPDATE, [clt.username, clt.player_info])
         case gsm.LOBBY_MSG.GAME_CONNECTED:
           group_id = int(req.dl.lst[1][0])
         case _:

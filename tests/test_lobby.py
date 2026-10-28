@@ -128,5 +128,16 @@ class LobbyTests(unittest.TestCase):
       self.assertEqual(msgs[0][1][:2], [str(room_id), '64'])
       self.assertEqual(msgs[0][1][3:], [[], []])
 
+  def test_set_player_info(self):
+    alice = login('alice')
+    bob = login('bob')
+    notifs(alice)
+    res = request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    self.assertEqual(res.dl.lst, ['38', ['42']])
+    self.assertEqual(notifs(alice), [['66', ['bob', b'data']]])
+    carol = login('carol')
+    members = notifs(carol)[0][1][4]
+    self.assertEqual(members[1][4], b'data')
+
 if __name__ == '__main__':
   unittest.main()

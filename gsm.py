@@ -691,6 +691,17 @@ class JoinRoomResponse(GSMResponse):
     gs_version = req.dl.lst[1][4]
     self.dl = List([result, [subtype, [group_id]]])
 
+class LobbyResultResponse(GSMResponse):
+  """Plain success response to `LOBBY_MSG` requests (result, [subtype])."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"LobbyResultResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSSUCCESS.value)
+    self.dl = List([result, [req.dl.lst[0]]])
+
 class GroupLeaveResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_LEAVE` messages."""
   def __init__(self, req: Message):
