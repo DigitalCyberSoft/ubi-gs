@@ -103,6 +103,16 @@ def send_member_leave(clt: client.TcpClient, group_id: int, members: list[client
     if member is not clt:
       send_notif(member, gsm.LOBBY_MSG.MEMBER_LEAVE, [clt.username, str(group_id)])
 
+def join_room_members(clt: client.TcpClient, room: H5_Room):
+  """After the join reply: the room's members (the player included) to the player, the player to the members."""
+  room_id = room.gs_room.group_id
+  for member in room_members(room_id):
+    info = member_info(member, room_id)
+    data = [info.username, "1" if info.is_visitor else "0", str(room_id), info.ip_addr, info.alt_ip_addr, info.player_info, str(info.status)]
+    send_notif(clt, gsm.LOBBY_MSG.MEMBER_JOIN, data)
+  send_member_join(clt, room_id, room_members(room_id))
+  send_room_update(room, exclude=clt)
+
 def leave_room(clt: client.TcpClient):
   """Removes the client from its room, the room goes away with its master or last player."""
   room = find_room(clt.room_id)
@@ -194,10 +204,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
             room.gs_room.nb_visitors += 1
           else:
             room.gs_room.nb_players += 1
-          # GROUP_INFO notification
+          # GROUP_INFO notification; the game takes the room from it, but ignores its members until the join reply
           send_group_info(clt, group_id, flags)
-          send_member_join(clt, group_id, room_members(group_id))
-          send_room_update(room, exclude=clt)
+          res.after = lambda: join_room_members(clt, room)
         case gsm.LOBBY_MSG.GROUP_LEAVE:
           group_id = int(req.dl.lst[1][0])
           res = gsm.GroupLeaveResponse(req)
@@ -230,6 +239,14 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       raise NotImplementedError(f"No request handler for {req.header.type.name} messages.")
   return res
 
+def send_response(clt: client.TcpClient, res: gsm.GSMResponse):
+  """Sends the response, then the notifications that must follow it (`res.after`)."""
+  print(res)
+  clt.conn.sendall(bytes(res))
+  after = getattr(res, 'after', None)
+  if after is not None:
+    after()
+
 def handle_client(clt: client.TcpClient):
   """Serves a connected game client until it disconnects."""
   try:
@@ -249,8 +266,7 @@ def handle_client(clt: client.TcpClient):
           with g_lock:
             res = handle_req(clt, msg)
             if res:
-              print(res)
-              clt.conn.sendall(bytes(res))
+              send_response(clt, res)
             elif msg.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
               clt.conn.sendall(data)
       else:

@@ -35,11 +35,15 @@ def request(clt: client.TcpClient, msg_type: gsm.MESSAGE_TYPE, data: list):
   """Builds a game request and lets the lobby handle it, returns the response."""
   header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, msg_type, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
   buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(data))))
-  return lobby.handle_req(clt, gsm.Message(None, in_buf=buf))
+  res = lobby.handle_req(clt, gsm.Message(None, in_buf=buf))
+  if res:
+    lobby.send_response(clt, res)
+  return res
 
 def notifs(clt: client.TcpClient):
-  """Decodes and clears the `LOBBY_MSG` notifications sent to the client."""
-  msgs = [gsm.Message(None, in_buf=buf).dl.lst for buf in clt.conn.sent]
+  """Decodes and clears the `LOBBY_MSG` notifications sent to the client (not the replies)."""
+  msgs = [gsm.Message(None, in_buf=buf) for buf in clt.conn.sent]
+  msgs = [m.dl.lst for m in msgs if m.header.type == gsm.MESSAGE_TYPE.LOBBY_MSG and m.dl.lst[0] not in ('38', '39')]
   clt.conn.sent.clear()
   return msgs
 
@@ -160,6 +164,23 @@ class LobbyTests(unittest.TestCase):
     self.assertIn(b'\x0aalice', data)
     # bob is not in the room info yet
     self.assertEqual(members[1][4], b'')
+
+class JoinOrderTests(unittest.TestCase):
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_room_info_after_join_reply(self):
+    alice = login('alice')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    alice.conn.sent.clear()
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    sent = [gsm.Message(None, in_buf=buf).dl.lst for buf in alice.conn.sent]
+    # GROUP_INFO with the room, the join reply, then the members (alice herself) as MEMBER_JOIN
+    self.assertEqual([m[0] for m in sent[:3]], ['53', '38', '50'])
+    self.assertEqual(sent[1], ['38', ['24', [room_id]]])
+    self.assertEqual(sent[2][1][:3], ['alice', '0', room_id])
 
 if __name__ == '__main__':
   unittest.main()
