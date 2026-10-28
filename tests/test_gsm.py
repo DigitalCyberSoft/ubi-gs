@@ -20,6 +20,15 @@ class StillAliveTests(unittest.TestCase):
     self.assertEqual(res.header.receiver, gsm.SENDER_RECEIVER.P)
     self.assertEqual(len(bytes(res)), gsm.GSMSG_HEADER_SIZE)
 
+  def test_request_header_unchanged(self):
+    req = gsm.Message(None, in_buf=bytes([0x00, 0x00, 0x06, 0x01, 0x3A, 0x42]))
+    gsm.StillAliveResponse(req)
+    res = gsm.StillAliveResponse(req)
+    self.assertEqual(req.header.sender, gsm.SENDER_RECEIVER.P)
+    self.assertEqual(req.header.receiver, gsm.SENDER_RECEIVER.S)
+    self.assertEqual(res.header.sender, gsm.SENDER_RECEIVER.S)
+    self.assertEqual(res.header.receiver, gsm.SENDER_RECEIVER.P)
+
   def test_still_alive_response_type(self):
     req = gsm.Message(None, in_buf=bytes([0x00, 0x00, 0x06, 0x01, 0x3B, 0x42]))
     with self.assertRaises(TypeError):

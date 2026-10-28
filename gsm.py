@@ -1,3 +1,4 @@
+from copy import copy
 from enum import Enum
 import blowfish, gsxor, pkc, client, utils
 from client import TcpClient
@@ -309,7 +310,8 @@ class GSMessageBundle:
 class GSMResponse:
   """Base class for GS message responses."""
   def __init__(self, req: Message):
-    self.header = req.header
+    # a copy, the same request can be answered more than once
+    self.header = copy(req.header)
     self.header.sender, self.header.receiver = self.header.receiver, self.header.sender
     self.dl: List = None
 
