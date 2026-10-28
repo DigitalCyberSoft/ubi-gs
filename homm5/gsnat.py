@@ -102,7 +102,13 @@ def start_server():
     now = time.monotonic()
     remove_silent(now)
     if data is not None:
-      for packet, addr in handle_packet(data, address, now):
+      # one bad packet must not stop the service
+      try:
+        packets = handle_packet(data, address, now)
+      except Exception as err:
+        print(f"Bad packet from {address[0]}:{address[1]}: {err!r}")
+        continue
+      for packet, addr in packets:
         sock.sendto(packet, addr)
 
 if __name__ == "__main__":
