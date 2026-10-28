@@ -18,6 +18,9 @@ g_rooms: list[H5_Room] = []
 next_room_id = 1000
 """Global room id assignment counter."""
 
+NO_REPLY = object()
+"""`handle_req` result for notifications: no reply and no echo."""
+
 g_lock = threading.RLock()
 """Guards the global lobby state and sending to the clients."""
 
@@ -231,8 +234,24 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           for member in lobby_members(clt.lobby_id):
             if member is not clt:
               send_notif(member, gsm.LOBBY_MSG.PLAYER_INFO_UPDATE, [clt.username, clt.player_info])
-        case gsm.LOBBY_MSG.GAME_CONNECTED:
+        case gsm.LOBBY_MSG.START_GAME:
+          # the host pressed Start: [group id]
+          res = gsm.LobbyGroupResponse(req)
+        case gsm.LOBBY_MSG.GAME_READY:
+          # the host is ready: [group id, data, port, ?]; everyone in the room, the host included, gets GAME_STARTED
           group_id = int(req.dl.lst[1][0])
+          data = req.dl.lst[1][1]
+          port = req.dl.lst[1][2]
+          res = gsm.LobbyGroupResponse(req)
+          room = find_room(group_id)
+          if room is not None:
+            room.started = True
+            host_ip = clt.addr[0]
+            host_alt_ip = clt.local_ip or host_ip
+            res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.GAME_STARTED, [str(group_id), data, port, host_ip, host_alt_ip]) for m in room_members(group_id)]
+        case gsm.LOBBY_MSG.GAME_CONNECTED | gsm.LOBBY_MSG.GAME_FINISH | gsm.LOBBY_MSG.PLAYER_MATCH_STARTED | gsm.LOBBY_MSG.PLAYER_MATCH_FINISHED:
+          # notifications, no reply
+          res = NO_REPLY
         case _:
           raise NotImplementedError(f'No request handler for {subtype.name} lobby message.')
     case _:
@@ -264,8 +283,15 @@ def handle_client(clt: client.TcpClient):
           print(msg)
           # shared lobby state and other players' sockets
           with g_lock:
-            res = handle_req(clt, msg)
-            if res:
+            try:
+              res = handle_req(clt, msg)
+            except (NotImplementedError, ValueError, IndexError, TypeError) as err:
+              # an unknown or malformed request must not drop the player
+              print(f"Unhandled request from {clt.username}: {err!r}")
+              continue
+            if res is NO_REPLY:
+              pass
+            elif res:
               send_response(clt, res)
             elif msg.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
               clt.conn.sendall(data)

@@ -36,7 +36,7 @@ def request(clt: client.TcpClient, msg_type: gsm.MESSAGE_TYPE, data: list):
   header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, msg_type, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
   buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(data))))
   res = lobby.handle_req(clt, gsm.Message(None, in_buf=buf))
-  if res:
+  if res and res is not lobby.NO_REPLY:
     lobby.send_response(clt, res)
   return res
 
@@ -164,6 +164,34 @@ class LobbyTests(unittest.TestCase):
     self.assertIn(b'\x0aalice', data)
     # bob is not in the room info yet
     self.assertEqual(members[1][4], b'')
+
+class MatchStartTests(unittest.TestCase):
+  """The host starts the game."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_start(self):
+    alice = login('alice')
+    bob = login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    for clt in [alice, bob]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    for clt in [alice, bob]:
+      clt.conn.sent.clear()
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['15', [room_id]])
+    self.assertEqual(res.dl.lst, ['38', ['15', [room_id]]])
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['33', [room_id, b'', '0', '']])
+    self.assertEqual(res.dl.lst, ['38', ['33', [room_id]]])
+    # everyone in the room, the host included: group id, data, port, host ip, host local ip
+    for clt in [alice, bob]:
+      self.assertEqual(notifs(clt), [['56', [room_id, b'', '0', '127.0.0.1', '192.168.0.41']]])
+
+  def test_notifications_no_reply(self):
+    alice = login('alice')
+    for sub in ['34', '35', '44', '70']:
+      self.assertIs(request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, [sub, ['1000']]), lobby.NO_REPLY)
 
 class JoinOrderTests(unittest.TestCase):
   def setUp(self):

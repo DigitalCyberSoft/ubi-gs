@@ -169,11 +169,15 @@ class LOBBY_MSG(Enum):
   GAME_READY = 33
   GAME_CONNECTED = 34
   """Client-side notification, no response needed."""
+  GAME_FINISH = 35
+  """Client-side notification at the end of an unrated game, no response needed."""
   PLAYER_BAN = 36
   PLAYER_UNBAN = 40
   UPDATE_GAME_INFO = 41
   SET_PLAYER_INFO = 42
   LOBBY_DISCONNECT_ALL = 43
+  PLAYER_MATCH_STARTED = 44
+  """Client-side notification after MATCH_STARTED, no response needed."""
   MATCH_FINISH = 45
   GET_ALT_GROUP_INFO = 46
   MEMBER_JOIN = 50
@@ -191,6 +195,8 @@ class LOBBY_MSG(Enum):
   MATCH_READY = 65
   PLAYER_INFO_UPDATE = 66
   PLAYER_UPDATE_STATUS = 69
+  PLAYER_MATCH_FINISHED = 70
+  """Client-side notification after SUBMIT_MATCH, no response needed."""
   FINAL_MATCH_RESULTS = 71
   PLAYER_GROUP_GET = 106
   CHANGE_REQUESTED_LOBBIES = 109
@@ -713,6 +719,17 @@ class LobbyResultResponse(GSMResponse):
     self.header.type = MESSAGE_TYPE.LOBBY_MSG
     result = str(MESSAGE_TYPE.GSSUCCESS.value)
     self.dl = List([result, [req.dl.lst[0]]])
+
+class LobbyGroupResponse(GSMResponse):
+  """Plain success response to `LOBBY_MSG` requests about a group: [result, [subtype, [group id]]]."""
+  def __init__(self, req: Message):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"LobbyGroupResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSSUCCESS.value)
+    self.dl = List([result, [req.dl.lst[0], [req.dl.lst[1][0]]]])
 
 class GroupLeaveResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_LEAVE` messages."""
