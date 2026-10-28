@@ -311,6 +311,32 @@ class Message:
       return List([self.dl.lst[0], '<password>'] + self.dl.lst[2:])
     return self.dl
 
+MAX_MESSAGE_SIZE = 256 * 1024
+"""Largest message accepted from a game (profile data is at most 64 KiB)."""
+
+class MessageReader:
+  """Cuts a connection's byte stream into messages by the size in each header.
+
+  TCP keeps no message boundaries: one `recv` can hold part of a message or several of them."""
+  def __init__(self):
+    self.buf = b''
+
+  def feed(self, data: bytes) -> list[bytes]:
+    """Adds received bytes, returns the complete messages (raw, decoded by the caller with the current key)."""
+    self.buf += data
+    frames = []
+    while len(self.buf) >= GSMSG_HEADER_SIZE:
+      size = (self.buf[0] << 16) + (self.buf[1] << 8) + self.buf[2]
+      if size < GSMSG_HEADER_SIZE:
+        raise BufferError(f"Message size {size}B is below the header size.")
+      if size > MAX_MESSAGE_SIZE:
+        raise BufferError(f"Message of {size}B is over the {MAX_MESSAGE_SIZE}B limit.")
+      if len(self.buf) < size:
+        break
+      frames.append(self.buf[:size])
+      self.buf = self.buf[size:]
+    return frames
+
 class GSMessageBundle:
   """Packet containing 2 or more GS messages."""
   def __init__(self, first: Message, data: bytes, clt: client.TcpClient):

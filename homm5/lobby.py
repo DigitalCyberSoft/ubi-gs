@@ -324,18 +324,13 @@ def send_response(clt: client.TcpClient, res: gsm.GSMResponse):
 
 def handle_client(clt: client.TcpClient):
   """Serves a connected game client until it disconnects."""
+  reader = gsm.MessageReader()
   try:
     while True:
-      data = clt.conn.recv(4096)
+      data = clt.conn.recv(65536)
       if data:
-        req = gsm.Message(clt.sv_bf_key, in_buf=data)
-        if req.header.size < len(data):
-          bundle = gsm.GSMessageBundle(req, data[req.header.size:], clt)
-          print(bundle)
-          msgs = bundle.msgs
-        else:
-          msgs = [req]
-        for msg in msgs:
+        for frame in reader.feed(data):
+          msg = gsm.Message(clt.sv_bf_key, in_buf=frame)
           print(msg)
           # shared lobby state and other players' sockets
           with g_lock:

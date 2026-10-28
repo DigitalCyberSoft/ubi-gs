@@ -54,6 +54,30 @@ class BundleTests(unittest.TestCase):
     bundle = gsm.GSMessageBundle(first, data[first.header.size:], client.TcpClient((None, None)))
     self.assertEqual(len(bundle.msgs), 2)
 
+class MessageReaderTests(unittest.TestCase):
+  """The TCP stream is cut into messages by their declared size."""
+  def test_split_and_coalesced(self):
+    one = bytes([0, 0, 6, 1, 58, 0x42])
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
+    big = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['42', [b'x' * 10000]]))))
+    stream = one + big + one
+    reader = gsm.MessageReader()
+    frames = []
+    # one byte at a time, then the rest in odd pieces
+    for i in range(0, 7):
+      frames += reader.feed(stream[i:i + 1])
+    for i in range(7, len(stream), 997):
+      frames += reader.feed(stream[i:i + 997])
+    self.assertEqual(frames, [one, big, one])
+    self.assertEqual(gsm.Message(None, in_buf=frames[1]).dl.lst, ['42', [b'x' * 10000]])
+    self.assertEqual(reader.feed(one * 3), [one] * 3)
+
+  def test_bad_sizes(self):
+    with self.assertRaises(BufferError):
+      gsm.MessageReader().feed(bytes([0, 0, 5, 1, 58, 0x42]))
+    with self.assertRaises(BufferError):
+      gsm.MessageReader().feed(bytes([0x10, 0, 0, 1, 58, 0x42]))
+
 class RedactionTests(unittest.TestCase):
   """Logs leave out credentials."""
   def test_login_password(self):
