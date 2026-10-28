@@ -104,6 +104,14 @@ class ChatTests(IrcTestCase):
     self.assertFalse(any('PRIVMSG' in l for l in alice.read()))
     self.assertTrue(bob.alive())
 
+  def test_long_line(self):
+    # frames of 256 bytes and more used to be cut short when decrypted
+    alice, bob = self.player('alice'), self.player('bob')
+    alice.read()
+    text = 'x' * 280
+    bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1{text}')
+    self.assertTrue(any(l.endswith('%1' + text) for l in alice.read()))
+
 class RobustnessTests(IrcTestCase):
   """Bad input gets an error reply, not a dropped connection."""
   def test_empty_parameters(self):
