@@ -64,16 +64,12 @@ def handle_client(clt: client.TcpClient):
             if res:
               print(res)
               clt.conn.sendall(bytes(res))
-            elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
-              clt.conn.sendall(data)
         else:
           print(req)
           res = handle_req(clt, req)
           if res:
             print(res)
             clt.conn.sendall(bytes(res))
-          elif req.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
-            clt.conn.sendall(data)
       else:
         print("No more data from", clt.addr)
         break

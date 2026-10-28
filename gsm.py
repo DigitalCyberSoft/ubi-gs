@@ -601,15 +601,15 @@ class JoinLobbyServerResponse(GSMResponse):
 
 class LobbyServerLoginResponse(GSMResponse):
   """Response to `LOBBYSERVERLOGIN` messages."""
-  def __init__(self, req: Message):
+  def __init__(self, req: Message, server_id: int = 1):
     if req.header.type != MESSAGE_TYPE.LOBBYSERVERLOGIN:
       raise TypeError(f"LobbyServerLoginResponse constructed from {req.header.type} request.")
     super().__init__(req)
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.GSSUCCESS
     result = str(MESSAGE_TYPE.LOBBYSERVERLOGIN.value)
-    server_id = req.dl.lst[1]
-    self.dl = List([result, [server_id]])
+    # the request's second field is a flag, the reply carries this lobby server's id
+    self.dl = List([result, [str(server_id)]])
 
 class JoinLobbyResponse(GSMResponse):
   """Response to `LOBBY_MSG.JOIN_LOBBY` messages."""
@@ -759,7 +759,8 @@ class GroupConfigUpdateResultResponse(GSMResponse):
     flags = int(req.dl.lst[1][1])
     # list iterator
     idx = 2
-    if flags & ROOM_UPDATE_FLAGS.DS_FLAGS.value == ROOM_UPDATE_FLAGS.DS_FLAGS.value:
+    # any of the dedicated server flags
+    if flags & ROOM_UPDATE_FLAGS.DS_FLAGS.value:
       # see group.DS_ROOM_UPDATE_FLAGS for details
       ds_flags = int(req.dl.lst[1][idx])
       idx += 1

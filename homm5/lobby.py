@@ -172,8 +172,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
         case gsm.LOBBY_MSG.GROUP_INFO_GET:
           group_id = int(req.dl.lst[1][0])
           flags = int(req.dl.lst[1][1])
+          # the GROUP_INFO notification is the answer
           send_group_info(clt, group_id, flags)
-          res = gsm.GetGroupInfoResponse(req)
+          res = NO_REPLY
         case gsm.LOBBY_MSG.CREATE_ROOM:
           room_id = next_room_id
           next_room_id = next_room_id + 1
@@ -295,8 +296,6 @@ def handle_client(clt: client.TcpClient):
               pass
             elif res:
               send_response(clt, res)
-            elif msg.header.type != gsm.MESSAGE_TYPE.STILLALIVE:
-              clt.conn.sendall(data)
       else:
         print("No more data from", clt.addr)
         break
