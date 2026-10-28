@@ -16,14 +16,25 @@ def relay(name: str, proc: subprocess.Popen):
   for line in proc.stdout:
     print(f'{name:<{width}} | {line}', end='', flush=True)
 
+def ignore_signals():
+  signal.signal(signal.SIGINT, signal.SIG_IGN)
+  signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+def interrupted(*_):
+  ignore_signals()
+  raise KeyboardInterrupt
+
 def main():
-  procs = {}
+  procs, relays = {}, []
   for name in SERVICES:
     procs[name] = subprocess.Popen([sys.executable, '-u', os.path.join(HERE, f'{name}.py')], cwd=HERE,
       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
-    threading.Thread(target=relay, args=(name, procs[name]), daemon=True).start()
-  # SIGTERM (e.g. systemd, docker stop) stops everything like Ctrl+C
-  signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
+    relays.append(threading.Thread(target=relay, args=(name, procs[name]), daemon=True))
+    relays[-1].start()
+  # Ctrl+C or SIGTERM (e.g. systemd, docker stop) stops everything, once: further signals
+  # (a terminal sends Ctrl+C to the whole process group) must not cut the shutdown short
+  signal.signal(signal.SIGINT, interrupted)
+  signal.signal(signal.SIGTERM, interrupted)
   try:
     while True:
       for name, proc in procs.items():
@@ -34,6 +45,7 @@ def main():
   except KeyboardInterrupt:
     return 0
   finally:
+    ignore_signals()
     for proc in procs.values():
       if proc.poll() is None:
         proc.terminate()
@@ -42,6 +54,9 @@ def main():
         proc.wait(timeout=5)
       except subprocess.TimeoutExpired:
         proc.kill()
+    # let the output threads finish while the interpreter is still running
+    for thread in relays:
+      thread.join(timeout=2)
 
 if __name__ == '__main__':
   sys.exit(main())
