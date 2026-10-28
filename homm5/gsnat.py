@@ -70,13 +70,13 @@ def handle_segment(data: bytes, address: tuple[str, int], now: float):
     print(f'added client {clt.addr}:{clt.port}')
   if clt is not None:
     clt.last_seen = now
-  # ConnectHost (SYN)
-  if req.segment.window:
+  # ConnectHost (SYN); a FIN from an unknown address has no client to answer for
+  if req.segment.window and clt is not None:
     res = srp.SRPResponse(req, clt)
     packets.append((bytes(res), address))
     print(res)
   # NAT message (address request), the address is sent when the game pings
-  elif req.segment.msg:
+  elif req.segment.msg and clt is not None:
     clt.nat_req = req.segment.msg
     clt.address_pending = True
     if clt.ping_id is None:
