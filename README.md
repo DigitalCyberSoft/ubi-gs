@@ -27,8 +27,14 @@ The next sections explain how to run a server for Heroes of Might and Magic V an
 
 ### Status
 This guide describes this fork with its open pull requests merged (see the integration PR #35); where a feature comes from one PR, it is named.
-- **Works:** Heroes V 1.60 logs in to "ubi.com" with a per-player account (#43), stays in the lobby, lists rooms and players, and joining a room fills its player slots (#39). Players on other machines can connect (#36).
-- **Not yet:** a match can't be started yet: the server answers the game's start requests (#39), but the host's Start Game button stays disabled, which is still being investigated (#18). Rated results (#20), friends (#21), ratings (#22) and the profile screen (#23) are in progress.
+- **Works:**
+  - Heroes V 1.60 logs in to "ubi.com" with a per-player account (#43), stays in the lobby, and lists rooms, players and chat.
+  - Joining a room fills its player slots (#39), and players on other machines can connect (#36).
+  - Friends can be added and removed (#44); a friend's online state still shows greyed.
+  - Ratings appear in the player list, starting at 1500 (#45), and the Profile screen loads stored data (#46).
+- **Not yet:**
+  - A match can't be started: the server answers the game's start requests (#39), but the host's Start Game button stays disabled, which is still being investigated (#18).
+  - Because of that, rated results (#47) and saving the profile after rated play haven't been seen in the game, and results don't change ratings yet.
 
 ### 1. The server
 
@@ -104,7 +110,7 @@ To go back to normal, remove the line.
 Only 1.60 has been tested in-game against these services; the expansions are untested past gsinit.
 
 **Logging in:** open Multi Player → ubi.com and type any name and password. There's no registration; the first login creates the account (#43).
-- **Logging in again with the same name and password** gets the same account back (it is also where friends, ratings and profile data will be kept once #21-#23 land).
+- **Logging in again with the same name and password** gets the same account back, with its friends, rating and profile data.
 - **A taken name:** if the name already belongs to an account with a different password, you get the next free name instead: `name-1`, `name-2`, and so on. Log in again with the same name and password and you get that same `name-k` account back.
 - **Names** are case-insensitive and at most 11 bytes, suffix included; longer names are cut. A name may not be empty or contain spaces or control characters, and the password may not be empty.
 - **Logging in twice:** a second login to the same account (for example after the game crashed) closes the older connection.
