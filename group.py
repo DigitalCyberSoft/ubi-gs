@@ -177,6 +177,8 @@ class Room(Group):
     self.game_version = room_data["game_version"]
     self.gs_version = room_data["gs_version"]
     self.alt_group_info = room_data["alt_group_info"]
+    # game title of the room, the game hides rooms of other titles
+    self.games = self.game_title
     self.nb_players = 0
     self.nb_visitors = 0
     self.ip_addr = "127.0.0.1"

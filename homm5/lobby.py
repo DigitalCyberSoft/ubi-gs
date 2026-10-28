@@ -21,6 +21,114 @@ next_room_id = 1000
 g_lock = threading.RLock()
 """Guards the global lobby state and sending to the clients."""
 
+def send_notif(clt: client.TcpClient, subtype: gsm.LOBBY_MSG, data: list):
+  """Sends a `LOBBY_MSG` notification; a client that went away is skipped."""
+  header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.S, gsm.SENDER_RECEIVER.P)
+  msg = gsm.Message(clt.sv_bf_key, header=header, dl=gsm.List([str(subtype.value), data]))
+  notif = gsm.GSMNotification(msg)
+  print(f'-> {clt.username} {notif}')
+  try:
+    notif.send_tcp(clt)
+  except OSError as err:
+    print(f'failed to notify {clt.username}: {err}')
+
+def find_room(group_id: int):
+  """Returns the room with the id, if any."""
+  return next((r for r in g_rooms if r.gs_room.group_id == group_id), None)
+
+def lobby_members(lobby_id: int):
+  """Clients in the lobby, including the ones in its rooms."""
+  return [c for c in g_clients if c.lobby_id == lobby_id]
+
+def room_members(room_id: int):
+  """Clients in the room."""
+  return [c for c in g_clients if c.room_id == room_id]
+
+def room_list(room: H5_Room):
+  """Room data list with the up to date `group_info` buffer."""
+  room.gs_room.group_info = H5_Serializer().serialize_roominfo(room.room_info)
+  return room.gs_room.to_list()
+
+def member_info(member: client.TcpClient, group_id: int):
+  """Member data of the client in the group."""
+  info = MemberInfo(member.username, str(group_id))
+  info.is_visitor = member.is_visitor
+  info.ip_addr = member.addr[0]
+  info.alt_ip_addr = member.local_ip or member.addr[0]
+  # the game's own player data travels in the room info buffer
+  info.player_info = b''
+  if find_room(group_id) is not None:
+    info.status = int(PLAYER_STATUS.PS_GAMECONNECTED.value)
+  else:
+    info.status = 0
+  return info
+
+def send_group_info(clt: client.TcpClient, group_id: int, flags: int):
+  """Sends `GROUP_INFO` of a lobby (rooms and members) or a room (room data and members)."""
+  room = find_room(group_id)
+  if room is not None:
+    data = room_list(room)
+    children = []
+    members = room_members(group_id)
+  else:
+    data = []
+    children = [room_list(r) for r in g_rooms if r.gs_room.parent_id == group_id]
+    members = lobby_members(group_id)
+  member_lists = [member_info(m, group_id).to_list() for m in members]
+  send_notif(clt, gsm.LOBBY_MSG.GROUP_INFO, [str(group_id), str(flags), data, children, member_lists])
+
+def send_room_update(room: H5_Room, exclude: client.TcpClient = None):
+  """Sends the room data (without members, they come with `MEMBER_JOIN`/`MEMBER_LEAVE`) to everyone in its lobby."""
+  room_id = room.gs_room.group_id
+  for member in lobby_members(room.gs_room.parent_id):
+    if member is not exclude and (member.room_id is None or member.room_id == room_id):
+      send_notif(member, gsm.LOBBY_MSG.GROUP_INFO, [str(room_id), str(LSM.LSM_GROUPINFO.value), room_list(room), [], []])
+
+def send_member_join(clt: client.TcpClient, group_id: int, members: list[client.TcpClient]):
+  """Sends `MEMBER_JOIN` of the client to the members."""
+  info = member_info(clt, group_id)
+  data = [info.username, "1" if info.is_visitor else "0", str(group_id), info.ip_addr, info.alt_ip_addr, info.player_info, str(info.status)]
+  for member in members:
+    if member is not clt:
+      send_notif(member, gsm.LOBBY_MSG.MEMBER_JOIN, data)
+
+def send_member_leave(clt: client.TcpClient, group_id: int, members: list[client.TcpClient]):
+  """Sends `MEMBER_LEAVE` of the client to the members."""
+  for member in members:
+    if member is not clt:
+      send_notif(member, gsm.LOBBY_MSG.MEMBER_LEAVE, [clt.username, str(group_id)])
+
+def leave_room(clt: client.TcpClient):
+  """Removes the client from its room, the room goes away with its master or last player."""
+  room = find_room(clt.room_id)
+  clt.room_id = None
+  if room is None:
+    return
+  room_id = room.gs_room.group_id
+  if clt.is_visitor:
+    room.gs_room.nb_visitors = max(0, room.gs_room.nb_visitors - 1)
+  else:
+    room.gs_room.nb_players = max(0, room.gs_room.nb_players - 1)
+  clt.is_visitor = False
+  remaining = room_members(room_id)
+  if room.gs_room.master == clt.username or len(remaining) == 0:
+    g_rooms.remove(room)
+    for member in remaining:
+      member.room_id = None
+    for member in lobby_members(room.gs_room.parent_id):
+      send_notif(member, gsm.LOBBY_MSG.GROUP_REMOVE, [str(room_id)])
+  else:
+    send_member_leave(clt, room_id, remaining)
+    send_room_update(room)
+
+def leave_lobby(clt: client.TcpClient):
+  """Removes the client from its lobby (and room)."""
+  leave_room(clt)
+  lobby_id = clt.lobby_id
+  clt.lobby_id = None
+  if lobby_id is not None:
+    send_member_leave(clt, lobby_id, lobby_members(lobby_id))
+
 def handle_req(clt: client.TcpClient, req: gsm.Message):
   """Handler for `gsm.Message` requests."""
   global next_room_id
@@ -33,6 +141,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       res = gsm.LoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN:
       clt.username = req.dl.lst[0]
+      # username, lobby server id, local ip, netmask
+      clt.local_ip = req.dl.lst[2]
       res = gsm.LobbyServerLoginResponse(req)
     case gsm.MESSAGE_TYPE.LOBBY_MSG:
       subtype = gsm.LOBBY_MSG(int(req.dl.lst[0]))
@@ -41,69 +151,65 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           res = gsm.JoinLobbyServerResponse(req, SERVER_ADDRESS)
         case gsm.LOBBY_MSG.GROUP_INFO_GET:
           group_id = int(req.dl.lst[1][0])
+          flags = int(req.dl.lst[1][1])
+          send_group_info(clt, group_id, flags)
           res = gsm.GetGroupInfoResponse(req)
         case gsm.LOBBY_MSG.CREATE_ROOM:
           room_id = next_room_id
           next_room_id = next_room_id + 1
           res = gsm.CreateRoomResponse(req, g_rooms, room_id, clt.username)
+          room = find_room(room_id)
+          room.gs_room.ip_addr = clt.addr[0]
+          # NEW_GROUP notification
+          for member in lobby_members(room.gs_room.parent_id):
+            if member is not clt and member.room_id is None:
+              send_notif(member, gsm.LOBBY_MSG.NEW_GROUP, room_list(room))
         case gsm.LOBBY_MSG.LOGIN:
           game_name = req.dl.lst[1][0]
           res = gsm.LobbyMsgResponse(req)
         case gsm.LOBBY_MSG.JOIN_LOBBY:
+          lobby_id = int(req.dl.lst[1][0])
+          if clt.lobby_id is not None:
+            leave_lobby(clt)
+          clt.lobby_id = lobby_id
           res = gsm.JoinLobbyResponse(req)
+          send_member_join(clt, lobby_id, lobby_members(lobby_id))
         case gsm.LOBBY_MSG.JOIN_ROOM:
           group_id = int(req.dl.lst[1][0])
-          room = next((r for r in g_rooms if r.gs_room.group_id == group_id), None)
-          res = gsm.JoinRoomResponse(req)
-          # GROUP_INFO notification
-          if room is not None:
-            header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.S, gsm.SENDER_RECEIVER.P)
-            flags = int(req.dl.lst[1][2]) # LSM (iconfig, group flags)
-            # homm5 always requests all info
-            if flags == LSM.LSM_ALLINFO.value:
-              subtype = str(gsm.LOBBY_MSG.GROUP_INFO.value)
-              # subroom children are not a feature
-              subrooms: list[Room] = []
-              info = MemberInfo(clt.username, str(group_id))
-              info.status = int(PLAYER_STATUS.PS_GAMECONNECTED.value)
-              info.set_player_info(8888, 0)
-              group_members: list[MemberInfo] = info.to_list()
-              # update buffer
-              room.gs_room.group_info = H5_Serializer().serialize_roominfo(room.room_info)
-              dl = gsm.List([subtype, [str(group_id), str(flags), room.gs_room.to_list(), subrooms, group_members]])
-              msg = gsm.Message(clt.sv_bf_key, header=header, dl=dl)
-              notif = gsm.GSMNotification(msg)
-              print(notif)
-              notif.send_tcp(clt)
-            else:
-              raise NotImplementedError(f"Unexpected GROUP_INFO iconfig value: {flags}.")
-          else:
+          flags = int(req.dl.lst[1][2]) # LSM (iconfig, group flags)
+          room = find_room(group_id)
+          if room is None:
             raise ValueError("Failed to find the requested room on join.")
+          res = gsm.JoinRoomResponse(req)
+          if clt.room_id is not None:
+            leave_room(clt)
+          clt.room_id = group_id
+          clt.is_visitor = req.dl.lst[1][3] == "1"
+          if clt.is_visitor:
+            room.gs_room.nb_visitors += 1
+          else:
+            room.gs_room.nb_players += 1
+          # GROUP_INFO notification
+          send_group_info(clt, group_id, flags)
+          send_member_join(clt, group_id, room_members(group_id))
+          send_room_update(room, exclude=clt)
+        case gsm.LOBBY_MSG.GROUP_LEAVE:
+          group_id = int(req.dl.lst[1][0])
+          res = gsm.GroupLeaveResponse(req)
+          if group_id == clt.room_id:
+            leave_room(clt)
+          elif group_id == clt.lobby_id:
+            leave_lobby(clt)
         case gsm.LOBBY_MSG.GROUP_CONFIG_UPDATE_RES:
           group_id = int(req.dl.lst[1][0])
-          room = next((r for r in g_rooms if r.gs_room.group_id == group_id), None)
+          room = find_room(group_id)
           if room is None:
             raise ValueError(f'Room {group_id} not found on GROUP_CONFIG_UPDATE_RES.')
           res = gsm.GroupConfigUpdateResultResponse(req, room)
           # process group_info buffer
           room.room_info = H5_Serializer().deserialize_roominfo(room.gs_room.group_info)
-          # GROUP_INFO notification
-          header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.S, gsm.SENDER_RECEIVER.P)
-          flags = LSM.LSM_ALLINFO.value # LSM (iconfig, group flags)
-          subtype = str(gsm.LOBBY_MSG.GROUP_INFO.value)
-          # subroom children are not a feature
-          subrooms: list[Room] = []
-          info = MemberInfo(clt.username, str(group_id))
-          info.status = int(PLAYER_STATUS.PS_GAMECONNECTED.value)
-          info.set_player_info(8888, 0)
-          group_members: list[MemberInfo] = info.to_list()
-          # update buffer
-          room.gs_room.group_info = H5_Serializer().serialize_roominfo(room.room_info)
-          dl = gsm.List([subtype, [str(group_id), str(flags), room.gs_room.to_list(), subrooms, group_members]])
-          msg = gsm.Message(clt.sv_bf_key, header=header, dl=dl)
-          notif = gsm.GSMNotification(msg)
-          print(notif)
-          notif.send_tcp(clt)
+          # GROUP_INFO notifications
+          send_room_update(room)
         case gsm.LOBBY_MSG.GAME_CONNECTED:
           group_id = int(req.dl.lst[1][0])
         case _:
@@ -149,6 +255,7 @@ def handle_client(clt: client.TcpClient):
     clt.conn.close()
     with g_lock:
       g_clients.remove(clt)
+      leave_lobby(clt)
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

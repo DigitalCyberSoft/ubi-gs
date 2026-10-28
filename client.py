@@ -11,6 +11,14 @@ class TcpClient:
     self.game_bf_key: bytes = None
     self.sv_bf_key: bytes = None
     self.username: str = None
+    self.local_ip: str = None
+    """Local (private) IPv4 reported at lobby login."""
+    self.lobby_id: int = None
+    """Lobby the client is in."""
+    self.room_id: int = None
+    """Room the client is in."""
+    self.is_visitor = False
+    """The client is a visitor (spectator) of its room."""
 
 class UdpClient:
   """Connected game client."""
