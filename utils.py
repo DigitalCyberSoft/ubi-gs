@@ -96,9 +96,21 @@ def read_ipv4(ip: bytes):
     raise BufferError("Invalid IPv4 address buffer size")
   return socket.inet_ntoa(ip[::-1])
 
+GAME_ENCODING = 'latin-1'
+"""How the game's strings are held: one character per byte. The game sends its own code page
+(e.g. Windows-1252 or 1251), so reading and writing every byte as Latin-1 gives back exactly what it sent."""
+
+def game_bytes(text: str):
+  """A string as the game's bytes; characters beyond one byte (never from the game) become '?'."""
+  return text.encode(GAME_ENCODING, errors='replace')
+
+def game_str(data: bytes):
+  """The game's bytes as a string."""
+  return data.decode(GAME_ENCODING)
+
 def cap(text: str, size: int):
-  """Cuts `text` so its UTF-8 encoding plus a terminator fits a `size`-byte buffer of the game, on a character boundary."""
-  data = text.encode('utf8')
+  """Cuts `text` so its bytes plus a terminator fit a `size`-byte buffer of the game."""
+  data = game_bytes(text)
   if len(data) < size:
     return text
-  return data[:size - 1].decode('utf8', errors='ignore')
+  return game_str(data[:size - 1])

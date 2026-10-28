@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import TypedDict
-from utils import cap, write_u16, write_u32
+from utils import cap, game_bytes, write_u16, write_u32
 
 MEMBER_NAME_SIZE = 36
 """Size of the game's buffer for a member name, terminator included."""
@@ -245,7 +245,7 @@ class MemberInfo:
     """Writes to `player_data` buffer."""
     arr = bytearray()
     # username
-    arr.extend(bytes(self.username, 'utf8'))
+    arr.extend(game_bytes(self.username))
     # external ip
     ip_nbs = self.ip_addr.split('.')
     if len(ip_nbs) != 4:

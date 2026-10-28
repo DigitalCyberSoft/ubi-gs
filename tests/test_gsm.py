@@ -98,11 +98,29 @@ class LengthCapTests(unittest.TestCase):
       self.assertLess(len(field.encode('utf8')), size)
     self.assertEqual(fields[0], 'averyveryve')
 
-  def test_cap_character_boundary(self):
+  def test_cap_bytes(self):
     import utils
-    # 'é' is 2 bytes; never cut it in half
-    self.assertEqual(utils.cap('ééééééé', 12), 'ééééé')
+    # the game's strings are bytes in its code page: 'é' (0xE9 in Windows-1252) is one byte
+    self.assertEqual(utils.cap('é' * 15, 12), 'é' * 11)
     self.assertEqual(utils.cap('short', 12), 'short')
+
+class GameStringTests(unittest.TestCase):
+  """The game's bytes come back as they were sent (#55)."""
+  def test_round_trip(self):
+    raw = b's' + 'café'.encode('cp1252') + b'\x00s' + 'Привет'.encode('cp1251') + b'\x00'
+    lst = List.from_buf(bytearray(raw))
+    self.assertEqual(lst.to_buf(), raw)
+
+  def test_reply_keeps_bytes(self):
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.PLAYERINFO, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+    name = 'caf\xe9'  # as read from the game's byte 0xE9
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List([name]))))
+    res = gsm.PlayerInfoResponse(gsm.Message(None, in_buf=buf), name)
+    sent = bytes(res)
+    import gsxor
+    payload = gsxor.decrypt(sent[gsm.GSMSG_HEADER_SIZE:])
+    self.assertIn(b'scaf\xe9\x00', payload)
+    self.assertNotIn(b'\xc3\xa9', payload)
 
 if __name__ == '__main__':
   unittest.main()
