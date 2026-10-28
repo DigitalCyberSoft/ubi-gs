@@ -1,4 +1,4 @@
-import sys, os, errno, re, socket, subprocess, tempfile, textwrap, unittest
+import sys, os, errno, re, signal, socket, subprocess, tempfile, textwrap, unittest
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 homm5_dir = os.path.join(root_dir, 'homm5')
@@ -150,6 +150,9 @@ class LauncherTests(unittest.TestCase):
           'print("bad can\'t listen on TCP port 7777: another program is already using it.", file=sys.stderr)\nsys.exit(2)\n')
       here = launch.HERE
       launch.HERE = tmp
+      handlers = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+      self.addCleanup(signal.signal, signal.SIGINT, handlers[0])
+      self.addCleanup(signal.signal, signal.SIGTERM, handlers[1])
       read, write = os.pipe()
       saved = os.dup(1)
       try:
