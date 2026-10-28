@@ -4,7 +4,7 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 import limits
 import ports
-import gsm, client, h5, accounts
+import gsm, client, h5, accounts, ratings
 from group import Room, LSM, MemberInfo, PLAYER_STATUS, MEMBER_NAME_SIZE
 from utils import cap
 from h5_data import H5_Room, H5_RoomInfo, H5_Serializer
@@ -167,7 +167,19 @@ def new_match(group_id: int):
   global next_match_id
   match_id = next_match_id
   next_match_id += 1
-  g_matches[match_id] = {'group': group_id, 'results': {}}
+  room = find_room(group_id)
+  members = [m for m in room_members(group_id) if not m.is_visitor]
+  # the names the games use for the players: account names first (a typed name may be someone else's account)
+  by_name = {}
+  for member in members:
+    account = accounts.find(member.username)
+    if account is not None:
+      by_name[account.name] = account
+  for member in members:
+    if member.typed_name and member.typed_name not in by_name and by_name.get(member.username):
+      by_name[member.typed_name] = by_name[member.username]
+  g_matches[match_id] = {'group': group_id, 'results': {}, 'by': {}, 'disputed': set(), 'accounts': by_name,
+    'players': [m.username for m in members], 'game': room.gs_room.game_title if room else ''}
   return match_id
 
 def handle_req(clt: client.TcpClient, req: gsm.Message):
@@ -291,7 +303,13 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           if match is not None:
             for entry in req.dl.lst[1][2:]:
               if isinstance(entry, list) and len(entry) >= 5:
-                match['results'][entry[0]] = entry[4]
+                name, values = entry[0], entry[4]
+                # every client submits every player's values; a different result from another player is disputed
+                old = match['results'].get(name)
+                if old and values and match['by'].get(name) is not clt and old[0] != values[0]:
+                  match['disputed'].add(name)
+                match['results'][name] = values
+                match['by'][name] = clt
           res = gsm.LobbyGroupResponse(req)
         case gsm.LOBBY_MSG.MATCH_FINISH:
           # [group id]; the room gets everyone's submitted results
@@ -304,6 +322,11 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
             room.match_id = None
             results = [[name, values] for name, values in match['results'].items()]
             final = [str(match_id), '38', results] if results else [str(match_id), '39', ['0']]
+            # the results into the ladder; a failure must not keep the room waiting for FINAL_MATCH_RESULTS
+            try:
+              ratings.match_finished(match)
+            except Exception as err:
+              print(f"Rating match {match_id} failed: {err!r}")
             res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.FINAL_MATCH_RESULTS, final) for m in room_members(group_id)]
         case gsm.LOBBY_MSG.GAME_CONNECTED | gsm.LOBBY_MSG.GAME_FINISH | gsm.LOBBY_MSG.PLAYER_MATCH_STARTED | gsm.LOBBY_MSG.PLAYER_MATCH_FINISHED:
           # notifications, no reply

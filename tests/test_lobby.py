@@ -261,6 +261,82 @@ class RatedMatchTests(unittest.TestCase):
     request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
     self.assertEqual(notifs(alice), [['71', [match_id, '39', ['0']]]])
 
+def values(result: str, race: str = '3'):
+  """22 values as the game submits them: result, race, ..., average level (16.16), seconds played."""
+  v = ['0'] * 22
+  v[0], v[1], v[16], v[17] = result, race, '65536', '87'
+  return v
+
+class RatedLadderTests(unittest.TestCase):
+  """Rated results update the ladder (#61)."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+    lobby.g_matches.clear()
+    import accounts
+    accounts.configure(accounts.MEMORY)
+    self.accounts = accounts
+    self.alice = accounts.login('alice', 'pw')
+    self.bob = accounts.login('bob', 'pw')
+
+  def tearDown(self):
+    self.accounts.configure(None)
+
+  def play(self, alice_says: str, bob_says: str):
+    alice, bob = login('alice'), login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    for clt in [alice, bob]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['17', [room_id, '1', '0']])
+    match_id = notifs(alice)[-1][1][1]
+    # every client submits every player's values
+    for clt, says in [(alice, alice_says), (bob, bob_says)]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['30', [match_id, '0', ['alice', '21', '22', '0', values(says)],
+        ['bob', '21', '22', '0', values('0' if says == '1' else '1', '5')]]])
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
+    self.assertEqual(notifs(bob)[-1][0], '71')
+
+  def stats(self, account):
+    return self.accounts.ladder_stats(account, 'HEROES_657d2c2ebadc6a1d/1')
+
+  def test_winner_and_loser(self):
+    self.play('1', '1')
+    a, b = self.stats(self.alice), self.stats(self.bob)
+    self.assertEqual((a['RATING'], b['RATING']), (1516, 1484))
+    self.assertEqual((a['WINS'], a['LOSSES'], b['WINS'], b['LOSSES']), (1, 0, 0, 1))
+    self.assertEqual((a['W_DUNGEON'], a['G_DUNGEON'], b['L_INFERNO']), (1, 1, 1))
+    self.assertEqual((a['TOT_TIME_PLAYED'], a['AVERAGE_HERO_LEVEL'], a['CUR_WINS_STREAK']), (87, 65536, 1))
+    # a second win: the rating moves less, the streak grows
+    self.play('1', '1')
+    a = self.stats(self.alice)
+    self.assertEqual((a['RATING'], a['GAMES_PLAYED'], a['MAX_WINS_STREAK']), (1531, 2, 2))
+
+  def test_disputed_not_rated(self):
+    # each claims the win
+    self.play('1', '0')
+    self.assertEqual(self.stats(self.alice), {})
+    self.assertEqual(self.stats(self.bob), {})
+
+class RatingsTests(unittest.TestCase):
+  def test_apply(self):
+    import ratings
+    won = [int(x) for x in values('1')]
+    lost = [int(x) for x in values('2', '9')]
+    lost[17] = -5
+    out = ratings.apply([(1, won), (2, lost)], {1: {'RATING': 1600, 'GAMES_PLAYED': 1, 'AVERAGE_HERO_LEVEL': 3 << 16}})
+    # the favourite wins: a small gain; a disconnection is a loss; an unknown race and a negative time count nothing
+    self.assertEqual((out[1]['RATING'], out[2]['RATING']), (1612, 1488))
+    self.assertEqual(out[1]['AVERAGE_HERO_LEVEL'], 2 << 16)
+    self.assertEqual((out[2]['LOSSES'], out[2]['DISCONNECTIONS'], out[2]['TOT_TIME_PLAYED'], out[2]['G_HEAVEN']), (1, 1, 0, 0))
+    self.assertEqual(len(out[1]), 42)
+
+  def test_parse(self):
+    import ratings
+    self.assertEqual(len(ratings.parse(values('1'))), 22)
+    self.assertIsNone(ratings.parse(['1', '0']))
+    self.assertIsNone(ratings.parse(['x'] * 22))
+
 class JoinOrderTests(unittest.TestCase):
   def setUp(self):
     lobby.g_clients.clear()
