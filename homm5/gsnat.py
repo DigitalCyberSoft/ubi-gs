@@ -13,6 +13,12 @@ CLIENT_TIMEOUT = 150
 TICK = 10
 """Seconds between checks for silent clients when no packets arrive."""
 
+MAX_CLIENTS = int(os.environ.get('UBIGS_MAX_NAT_CLIENTS', '4096'))
+"""Clients the NAT table holds; UDP source addresses can be spoofed, so the table needs a bound."""
+
+MAX_CLIENTS_PER_IP = int(os.environ.get('UBIGS_MAX_PER_IP', '16'))
+"""Clients the NAT table holds for one address (players behind one NAT share it)."""
+
 CLIENTS: list[client.NatClient] = []
 """Global list of connected game clients."""
 
@@ -50,6 +56,9 @@ def handle_segment(data: bytes, address: tuple[str, int], now: float):
     CLIENTS.remove(clt)
     clt = None
   if clt is None and srp.SRPHeaderFlags.FIN.name not in req.segment.header.flags:
+    if not has_room(address[0]):
+      print(f'NAT table full, ignoring {address[0]}:{address[1]}')
+      return packets
     clt = client.NatClient(address, None, None)
     CLIENTS.append(clt)
     print(f'added client {clt.addr}:{clt.port}')
@@ -75,6 +84,10 @@ def handle_segment(data: bytes, address: tuple[str, int], now: float):
       CLIENTS.remove(clt)
       print(f'removed client {clt.addr}:{clt.port}')
   return packets
+
+def has_room(ip: str):
+  """There is room in the table for another client from the address."""
+  return len(CLIENTS) < MAX_CLIENTS and sum(1 for c in CLIENTS if c.addr == ip) < MAX_CLIENTS_PER_IP
 
 def handle_packet(data: bytes, address: tuple[str, int], now: float):
   """Handles a NAT service datagram. Returns the packets to send."""

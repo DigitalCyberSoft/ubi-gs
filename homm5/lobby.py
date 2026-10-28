@@ -2,6 +2,7 @@ import socket, sys, os, threading
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
+import limits
 import gsm, client, h5
 from group import Room, LSM, MemberInfo, PLAYER_STATUS
 from h5_data import H5_Room, H5_RoomInfo, H5_Serializer
@@ -270,9 +271,11 @@ def start_server():
     
   while True:
     clt = client.TcpClient(sock.accept())
+    if not limits.TCP.admit(clt):
+      continue
     g_clients.append(clt)
     print(f"Connection from {clt.addr}")
-    threading.Thread(target=handle_client, args=(clt,), daemon=True).start()
+    threading.Thread(target=limits.TCP.serve, args=(handle_client, clt), daemon=True).start()
 
 if __name__ == "__main__":
     start_server()
