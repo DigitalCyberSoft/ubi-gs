@@ -3,7 +3,7 @@ import sys, os, unittest
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))
-import client, gsm, lobby
+import client, gsm, lobby, h5_data
 from data import List
 
 ROOM_INFO = bytes.fromhex(
@@ -138,6 +138,28 @@ class LobbyTests(unittest.TestCase):
     carol = login('carol')
     members = notifs(carol)[0][1][4]
     self.assertEqual(members[1][4], b'data')
+
+  def test_member_data_from_room_info(self):
+    alice = login('alice')
+    bob = login('bob')
+    room_id = self.create_room(alice)
+    # the host adds itself to the room info with GROUP_CONFIG_UPDATE_RES
+    entry = h5_data.H5_PlayerInfo()
+    entry.username = 'alice'
+    entry.ext_ip.family = 2
+    entry.ext_ip.port = 8888
+    entry.ext_ip.ip = '127.0.0.1'
+    entry.local_port = 8888
+    lobby.find_room(room_id).room_info.player_infos.append(entry)
+    notifs(bob)
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [str(room_id), '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    members = [m for m in notifs(bob) if m[0] == '53'][0][1][4]
+    # alice's entry of the room info, in the game's PlayerInfo stream format
+    data = members[0][4]
+    self.assertEqual(data, h5_data.H5_Serializer().serialize_playerinfo(entry))
+    self.assertIn(b'\x0aalice', data)
+    # bob is not in the room info yet
+    self.assertEqual(members[1][4], b'')
 
 if __name__ == '__main__':
   unittest.main()

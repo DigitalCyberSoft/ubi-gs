@@ -982,6 +982,14 @@ class H5_Serializer:
 
   def serialize_roominfo(self, room_info: H5_RoomInfo):
     """Serializes `CRoomInfo` structure into a `group.Room.group_info` buffer."""
+    return self.serialize_struct(room_info.serialize())
+
+  def serialize_playerinfo(self, player_info: H5_PlayerInfo):
+    """Serializes `PlayerInfo` structure into a lobby member data buffer (`LOBBY_MSG.SET_PLAYER_INFO`)."""
+    return self.serialize_struct(player_info.serialize())
+
+  def serialize_struct(self, data: bytes):
+    """Wraps serialized structure fields into the file streams."""
     # stream 0 - empty
     struct_stream = H5_Stream()
     struct_stream.id = H5_STREAM_TYPE.STRUCTURE.value
@@ -991,7 +999,7 @@ class H5_Serializer:
     # stream 1 - room info
     data_stream = H5_Stream()
     data_stream.id = H5_STREAM_TYPE.COMPRESSED_DATA.value
-    data_stream.data = room_info.serialize()
+    data_stream.data = data
     data_stream.size = len(data_stream.data)
     # the limit for 1B size is 127
     data_stream.size_4b = data_stream.size > 127

@@ -56,6 +56,12 @@ def member_info(member: client.TcpClient, group_id: int):
   info.ip_addr = member.addr[0]
   info.alt_ip_addr = member.local_ip or member.addr[0]
   info.player_info = member.player_info
+  # the game sets it only after a ladder query; until then use its entry in the room info
+  room = find_room(group_id)
+  if not info.player_info and room is not None:
+    entry = next((p for p in room.room_info.player_infos if p.username == member.username), None)
+    if entry is not None:
+      info.player_info = H5_Serializer().serialize_playerinfo(entry)
   if find_room(group_id) is not None:
     info.status = int(PLAYER_STATUS.PS_GAMECONNECTED.value)
   else:
