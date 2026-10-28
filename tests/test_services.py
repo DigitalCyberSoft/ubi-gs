@@ -94,10 +94,10 @@ class ProxyModuleTests(unittest.TestCase):
     finally:
       sock.close()
 
-  def test_ladder_query_closes_module(self):
+  def test_unknown_module_data_closes_module(self):
     sock = start(proxy_wm)
     try:
-      sock.sendall(game_message(gsm.MESSAGE_TYPE.PROXY_HANDLER, ['1281', '1', ['1', ['1', 'HEROES_657d2c2ebadc6a1d', '1', '0', ['1', ['alice', '1']], [[], [], []]]]]))
+      sock.sendall(game_message(gsm.MESSAGE_TYPE.PROXY_HANDLER, ['9999', '1', []]))
       self.assertEqual(sock.recv(64), b'')
     finally:
       sock.close()

@@ -258,3 +258,14 @@ def friend_of(account: Account) -> list[Account]:
   rows = _query('''SELECT accounts.id, accounts.name FROM friends JOIN accounts ON accounts.id = friends.account
     WHERE friends.friend = ?''', (account.id,))
   return [Account(*row) for row in rows]
+# ladder stats
+
+def ladder_stats(account: Account, ladder: str) -> dict[str, int]:
+  """The account's stored ladder fields."""
+  rows = _query('SELECT field, value FROM ladder WHERE account = ? AND game = ?', (account.id, ladder))
+  return dict(rows)
+
+def set_ladder_stats(account: Account, ladder: str, stats: dict[str, int]):
+  with _transaction() as conn:
+    conn.executemany('INSERT OR REPLACE INTO ladder (account, game, field, value) VALUES (?, ?, ?, ?)',
+      [(account.id, ladder, field, int(value)) for field, value in stats.items()])
