@@ -3,7 +3,7 @@ This is a modified version of https://github.com/jaraco/irc/blob/main/irc/server
 Adjusted for Ubi's GameService IRC implementation.
 """
 import sys, os
-import argparse, errno, logging, re, select, socket, socketserver, typing
+import argparse, errno, logging, re, select, socket, socketserver, time, typing
 from irc.client import NickMask
 from irc.events import codes
 import jaraco.logging
@@ -11,7 +11,7 @@ from jaraco.stream import buffer
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import ircm, h5, utils
+import ircm, h5, limits, utils
 
 SERVER_ADDRESS = h5.ENDPOINTS["irc"]
 """Address of the IRC service."""
@@ -89,6 +89,8 @@ class IRCClient(socketserver.BaseRequestHandler):
     self.send_queue = []  # Messages to send to client (strings)
     self.channels = {}  # Channels the client is in
     self.pending = b''  # Received bytes of an incomplete frame
+    self.last_seen = time.monotonic()  # Last data from the client
+    self.pinged = False  # A PING is out since `last_seen`
 
     super().__init__(request, client_address, server)
 
@@ -111,6 +113,15 @@ class IRCClient(socketserver.BaseRequestHandler):
     if in_error:
       raise self.Disconnect()
 
+    # the game answers PINGs; a client that stays silent after one is gone
+    idle = time.monotonic() - self.last_seen
+    if idle > self.server.limits.timeout:
+      log.info('Client timed out: %s', self.client_ident())
+      raise self.Disconnect()
+    if idle > self.server.limits.timeout / 2 and not self.pinged:
+      self.pinged = True
+      self.send_queue.append(f'PING :{self.server.servername}')
+
     # Write any commands to the client
     while self.send_queue and ready_to_write:
       msg = self.send_queue.pop(0)
@@ -128,6 +139,8 @@ class IRCClient(socketserver.BaseRequestHandler):
 
     if not data:
       raise self.Disconnect()
+    self.last_seen = time.monotonic()
+    self.pinged = False
     # frames (u16be size + Blowfish payload) can be split across reads or share one;
     # a frame is at most 2 + 0xFFFF bytes, so `pending` stays below that
     self.pending += data
@@ -256,6 +269,10 @@ class IRCClient(socketserver.BaseRequestHandler):
     self.mode = mode
     self.realname = realname
     return ''
+
+  def handle_pong(self, params: str):
+    """Handle the answer to a server `PING` (the game sends `PONG`)."""
+    return None
 
   def handle_ping(self, params: str):
     """Handle client PING requests to keep the connection alive."""
@@ -499,8 +516,25 @@ class IRCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     self.servername = 'localhost'
     self.channels = {}
     self.clients = {}
+    self.limits = limits.ConnectionLimits()
+    self.admitted = {}
+    """Admitted requests and their client addresses."""
 
     super().__init__(*args, **kwargs)
+
+  def verify_request(self, request, client_address):
+    """Accepts a connection only within the connection limits."""
+    if not self.limits.acquire(client_address[0]):
+      log.warning('Refused %s: connection limit reached', client_address)
+      return False
+    self.admitted[request] = client_address[0]
+    return True
+
+  def shutdown_request(self, request):
+    ip = self.admitted.pop(request, None)
+    if ip is not None:
+      self.limits.release(ip)
+    super().shutdown_request(request)
 
 
 def get_args():
