@@ -114,12 +114,13 @@ class FramingTests(unittest.TestCase):
     accounts.bind_session('framing', '127.0.0.1', alice)
     sock = start(proxy_wm)
     try:
+      # read in several pieces, and answered: refused, as it is no profile
       blob = bytes(range(256)) * 40
       payload = ['HEROES_657d2c2ebadc6a1d', '0', 'framing', '0', 'PUBLIC', blob, str(len(blob))]
       sock.sendall(game_message(gsm.MESSAGE_TYPE.PROXY_HANDLER, ['1026', '7', payload]))
       res = sock.recv(4096)
-      self.assertEqual(gsm.Message(None, in_buf=res).dl.lst, ['1026', '7', ['38', []]])
-      self.assertEqual(accounts.profile(alice, 'HEROES_657d2c2ebadc6a1d'), blob)
+      self.assertEqual(gsm.Message(None, in_buf=res).dl.lst, ['1026', '7', ['39', ['0']]])
+      self.assertIsNone(accounts.profile(alice, 'HEROES_657d2c2ebadc6a1d'))
     finally:
       sock.close()
 

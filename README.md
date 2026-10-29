@@ -31,10 +31,10 @@ This guide describes this fork with its open pull requests merged (see the integ
   - Heroes V 1.60 logs in to "ubi.com" with a per-player account (#43), stays in the lobby, and lists rooms, players and chat.
   - Joining a room fills its player slots (#39), and players on other machines can connect (#36).
   - Friends can be added and removed (#44); a friend's online state still shows greyed.
-  - Ratings appear in the player list, starting at 1500 (#45), and the Profile screen loads stored data (#46).
+  - Ratings appear in the player list, starting at 1500 (#45), and the Profile screen opens for every player, with the text a player saved in their own (#50).
 - **Not yet:**
   - A match can't be started: the server answers the game's start requests (#39), but the host's Start Game button stays disabled, which is still being investigated (#18).
-  - Because of that, rated results (#47) and saving the profile after rated play haven't been seen in the game, and results don't change ratings yet.
+  - Because of that, rated results (#47) haven't been seen in the game, and results don't change ratings yet.
 
 ### 1. The server
 

@@ -14,9 +14,9 @@ def module_request(code: str, seq: str, payload: list):
   buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List([code, seq, payload]))))
   return gsm.Message(None, in_buf=buf)
 
-def pivot_query(name: str):
+def pivot_query(name: str, request_id: str = '1'):
   # as observed: ['1281','1',['1',['1','HEROES_…','1','0',['1',['alice','1']],[[],[],[]]]]]
-  return ['1', ['1', GAME, '1', '0', ['1', [name, '1']], [[], [], []]]]
+  return ['1', [request_id, GAME, '1', '0', ['1', [name, '1']], [[], [], []]]]
 
 class LadderTests(unittest.TestCase):
   def setUp(self):
@@ -28,8 +28,8 @@ class LadderTests(unittest.TestCase):
     accounts.configure(None)
     self.dir.cleanup()
 
-  def query(self, name: str, seq: str = '1'):
-    res = proxy_wm.handle_req(self.clt, module_request(ladder.QUERY, seq, pivot_query(name)))
+  def query(self, name: str, seq: str = '1', request_id: str = '1'):
+    res = proxy_wm.handle_req(self.clt, module_request(ladder.QUERY, seq, pivot_query(name, request_id)))
     # round trip through the wire format
     return gsm.Message(None, in_buf=bytes(res))
 
@@ -65,6 +65,12 @@ class LadderTests(unittest.TestCase):
     accounts.bind_session('alice', '10.0.0.3', second)
     values = self.query('alice').dl.lst[2][1][1][3][0]
     self.assertEqual(values[0], '1400')
+
+  def test_request_id(self):
+    # the result names the request it answers: the game ignores the reply to its second query otherwise
+    accounts.login('alice', 'pw')
+    self.assertEqual(self.query('alice', '2', '1').dl.lst[2][1][1][0], '1')
+    self.assertEqual(self.query('alice', '3', '2').dl.lst[2][1][1][0], '2')
 
   def test_unknown_player(self):
     self.assertEqual(self.query('nobody').dl.lst, ['1281', '1', ['39', ['0']]])
