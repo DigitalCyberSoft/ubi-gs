@@ -237,6 +237,34 @@ def account_name(typed: str, ip: str) -> str:
   account = session(typed, ip)
   return account.name if account else typed
 
+# whether a game is still logged in: the router and its wait module refresh its session while it talks to them,
+# at least every 30 s while it is online; the IRC service, another process, asks
+
+SESSION_TOUCH = 60
+"""Seconds between refreshes of a connected game's session."""
+
+SESSION_LIVE = 180
+"""A session refreshed within this many seconds belongs to a game still logged in."""
+
+def touch_session(typed: str, ip: str):
+  """Records that the game at `ip` that logged in as `typed` is still connected."""
+  with _transaction() as conn:
+    conn.execute('UPDATE sessions SET updated = ? WHERE typed = ? AND ip = ?', (int(time.time()), typed, ip))
+
+def keep_session(clt):
+  """Refreshes the session of a logged-in `client.TcpClient`, at most every SESSION_TOUCH seconds."""
+  now = time.monotonic()
+  if clt.account is not None and clt.typed_name and now - clt.session_touched >= SESSION_TOUCH:
+    clt.session_touched = now
+    touch_session(clt.typed_name, clt.addr[0])
+
+def logged_in(name: str, ip: str, within: float = SESSION_LIVE) -> bool:
+  """Whether a game at `ip` logged in as `name` (the name typed or the account's) and was connected in the last `within` seconds."""
+  rows = _query('''SELECT 1 FROM sessions JOIN accounts ON accounts.id = sessions.account
+    WHERE sessions.ip = ? AND (sessions.typed = ? OR accounts.name = ?) AND sessions.updated >= ? LIMIT 1''',
+    (ip, name, name, int(time.time() - within)))
+  return bool(rows)
+
 # friends
 
 def add_friend(account: Account, friend: Account):

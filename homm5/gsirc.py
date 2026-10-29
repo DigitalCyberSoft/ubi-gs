@@ -10,7 +10,7 @@ import jaraco.logging
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
-import ircm, h5, limits, utils, ports, firewall
+import ircm, h5, limits, utils, ports, firewall, accounts
 
 SERVER_ADDRESS = h5.ENDPOINTS["irc"]
 """Address of the IRC service."""
@@ -20,6 +20,29 @@ LINE_SEP = re.compile(rb'\r?\n')
 
 MAX_LINE = 0xFFFF
 """Longest unfinished line kept; a client sending more without a line end is dropped."""
+
+# The chat is kept to what the game uses it for (a lobby's channel and its room's, people typing) and out of reach
+# of a bot network looking for a command channel: nothing but registering works before a nick is accepted, which
+# must be an account logged in from the same address and is dropped once that account isn't anymore; channels are
+# capped; and what a connection says is rate-limited.
+
+MAX_CHANNEL_MEMBERS = 100
+"""Default member cap of a channel (`IRCServer.max_channel_members`)."""
+
+MAX_CHANNELS = 4
+"""Channels one connection may be in at once."""
+
+MESSAGE_BURST = 20
+"""Messages, notices and topic changes a connection may send at once..."""
+
+MESSAGES_PER_SECOND = 2
+"""...and then per second."""
+
+MAX_TOPIC = 200
+"""Longest channel topic kept."""
+
+BEFORE_NICK = {'nick', 'user', 'ping', 'pong', 'quit'}
+"""Commands a connection may send before its nick is accepted."""
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +118,9 @@ class IRCClient(socketserver.BaseRequestHandler):
     self.channels = {}  # Channels the client is in
     self.pending = b''  # Received bytes of an incomplete frame
     self.line = bytearray()  # Received bytes of an unfinished line
+    self.tokens = float(MESSAGE_BURST)  # Messages the client may send now
+    self.refill = time.monotonic()  # Last refill of `tokens`
+    self.throttled = 0.0  # Last log of the client's dropped messages
     self.last_seen = time.monotonic()  # Last data from the client
     self.pinged = False  # A PING is out since `last_seen`
 
@@ -124,6 +150,13 @@ class IRCClient(socketserver.BaseRequestHandler):
       log.info('Client timed out: %s', self.client_ident())
       raise self.Disconnect()
     if idle > self.server.limits.timeout / 2 and not self.pinged:
+      # the game registers as it connects, and chats only while it is logged in
+      if not self.nick:
+        log.info(f'Closing {self.host}: never registered')
+        raise self.Disconnect()
+      if not self.logged_in():
+        log.info(f'Closing {self.client_ident()}: {self.nick} is no longer logged in from {self.host[0]}')
+        raise self.Disconnect()
       self.pinged = True
       self.send_queue.append(f'PING :{self.server.servername}')
 
@@ -183,7 +216,14 @@ class IRCClient(socketserver.BaseRequestHandler):
     try:
       log.debug(f'from {self.client_ident()}: {line}')
       command, sep, params = line.partition(' ')
-      handler = getattr(self, f'handle_{command.lower()}', None)
+      cmd = command.lower()
+      if not self.nick and cmd not in BEFORE_NICK:
+        # no listening in on channels, or setting their topics, without a logged-in account
+        raise IRCError.from_name('notregistered', ':You have not registered')
+      if cmd in ('join', 'privmsg', 'notice', 'topic') and not self.logged_in():
+        log.info(f'Closing {self.client_ident()}: {self.nick} is no longer logged in from {self.host[0]}')
+        raise self.Disconnect()
+      handler = getattr(self, f'handle_{cmd}', None)
       if not handler:
         log.info(f'No handler for command: {command}. Full line: {line}')
         raise IRCError.from_name(
@@ -213,6 +253,23 @@ class IRCClient(socketserver.BaseRequestHandler):
       else:
         raise
 
+  def logged_in(self):
+    """The client's nick is still an account logged in from its address."""
+    return self.server.allowed is None or self.server.allowed(self.nick, self.host[0])
+
+  def allow(self):
+    """Spends one of the client's message tokens, or tells that none is left."""
+    now = time.monotonic()
+    self.tokens = min(MESSAGE_BURST, self.tokens + (now - self.refill) * MESSAGES_PER_SECOND)
+    self.refill = now
+    if self.tokens < 1:
+      if now - self.throttled > 60:
+        self.throttled = now
+        log.warning(f'{self.client_ident()} sends too fast: dropping its messages')
+      return False
+    self.tokens -= 1
+    return True
+
   def handle_nick(self, params: str):
     """Handle the initial setting of the user's nickname and nick changes."""
     nick = params.strip()
@@ -228,6 +285,10 @@ class IRCClient(socketserver.BaseRequestHandler):
     if self.server.clients.get(nick, None) == self:
       # Already registered to user
       return
+
+    if self.server.allowed is not None and not self.server.allowed(nick, self.host[0]):
+      log.warning(f'Refused nick {nick} from {self.host[0]}: no such account logged in from there')
+      raise IRCError.from_name('erroneusnickname', f'{nick} :Nickname is not your account name')
 
     holder = self.server.clients.get(nick)
     if holder is not None:
@@ -312,6 +373,14 @@ class IRCClient(socketserver.BaseRequestHandler):
           'nosuchchannel', f'{r_channel_name} :No such channel'
         )
 
+      if r_channel_name not in self.channels:
+        if len(self.channels) >= MAX_CHANNELS:
+          raise IRCError.from_name('toomanychannels', f'{r_channel_name} :You have joined too many channels')
+        channel = self.server.channels.get(r_channel_name)
+        if channel is not None and len(channel.clients) >= self.server.max_channel_members:
+          log.warning(f"{self.client_ident()} can't join {r_channel_name}: full")
+          raise IRCError.from_name('channelisfull', f'{r_channel_name} :Cannot join channel (+l)')
+
       # Add user to the channel (create new channel if not exists)
       channel = self.server.channels.setdefault(
         r_channel_name, IRCChannel(r_channel_name)
@@ -353,6 +422,8 @@ class IRCClient(socketserver.BaseRequestHandler):
       raise IRCError.from_name('needmoreparams', cmd + ' :Not enough parameters')
     if not self.nick:
       raise IRCError.from_name('notregistered', ':You have not registered')
+    if not self.allow():
+      return
     chat = sanitize_chat(self.nick, msg)
     if chat is None:
       log.warning(f'dropped {cmd} from {self.client_ident()}: {msg!r}')
@@ -400,7 +471,10 @@ class IRCClient(socketserver.BaseRequestHandler):
       )
 
     if topic:
-      channel.topic = topic.lstrip(':')
+      if not self.allow():
+        return None
+      # everyone joining gets the topic: no control characters, a bounded size
+      channel.topic = re.sub(r'[\x00-\x1f\x7f]', '', topic.lstrip(':'))[:MAX_TOPIC]
       channel.topic_by = self.nick
     message = f':{self.client_ident()} TOPIC {channel_name} :{channel.topic}'
     return message
@@ -437,19 +511,6 @@ class IRCClient(socketserver.BaseRequestHandler):
       for client in channel.clients:
         client.send_queue.append(response)
       channel.clients.remove(self)
-
-  def handle_dump(self, params: str):
-    """Dump internal server information for debugging purposes."""
-    print("Clients:", self.server.clients)
-    for client in self.server.clients.values():
-      print(" ", client)
-      for channel in client.channels.values():
-        print("     ", channel.name)
-    print("Channels:", self.server.channels)
-    for channel in self.server.channels.values():
-      print(" ", channel.name, channel)
-      for client in channel.clients:
-        print("     ", client.nick, client)
 
   def handle_ison(self, params: str):
     response = f':{self.server.servername} 303 {self.client_ident().nick} :'
@@ -534,6 +595,9 @@ class IRCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     self.limits = limits.ConnectionLimits()
     self.admitted = {}
     """Admitted requests and their client addresses."""
+    self.allowed = accounts.logged_in
+    """Whether a nick may be used from an address: an account logged in from there (None: any nick)."""
+    self.max_channel_members = MAX_CHANNEL_MEMBERS
 
     super().__init__(*args, **kwargs)
 

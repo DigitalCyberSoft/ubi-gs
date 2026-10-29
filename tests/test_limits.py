@@ -132,19 +132,12 @@ class IrcLimitsTests(unittest.TestCase):
     self.assertFalse(closed(a, wait=0.3))
     a.close(), b.close()
 
-  def test_ping_keeps_a_quiet_client(self):
-    a = self.connect()
-    a.settimeout(2)
-    data = a.recv(1024)
-    self.assertIn(b'PING', ircm.IRCMessage(data).payload)
-    a.sendall(bytes(ircm.IRCMessage.from_str('PONG :localhost\r\n')))
-    # silent clients go after 1.5s; this one answered, so it is still served after that
-    time.sleep(1)
-    a.sendall(bytes(ircm.IRCMessage.from_str('PING :check\r\n')))
+  def read_until(self, sock: socket.socket, token: bytes):
+    """The payloads received until one holds `token`, or the connection ends."""
     replies, buf = b'', b''
     try:
-      while b'PONG' not in replies:
-        data = a.recv(1024)
+      while token not in replies:
+        data = sock.recv(1024)
         if not data:
           break
         buf += data
@@ -155,7 +148,20 @@ class IrcLimitsTests(unittest.TestCase):
           buf = buf[end:]
     except OSError:
       pass
-    self.assertIn(b'PONG', replies)
+    return replies
+
+  def test_ping_keeps_a_quiet_client(self):
+    # a registered client (any nick here): one that never registers is dropped at its first keepalive
+    self.server.allowed = None
+    a = self.connect()
+    a.settimeout(2)
+    a.sendall(bytes(ircm.IRCMessage.from_str('NICK :alice\r\n')))
+    self.assertIn(b'PING', self.read_until(a, b'PING'))
+    a.sendall(bytes(ircm.IRCMessage.from_str('PONG :localhost\r\n')))
+    # silent clients go after 1.5s; this one answered, so it is still served after that
+    time.sleep(1)
+    a.sendall(bytes(ircm.IRCMessage.from_str('PING :check\r\n')))
+    self.assertIn(b'PONG', self.read_until(a, b'PONG'))
     a.close()
 
   def test_silent_client_dropped(self):

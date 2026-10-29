@@ -54,6 +54,8 @@ class Player:
 class IrcTestCase(unittest.TestCase):
   def setUp(self):
     self.server = gsirc.IRCServer(('127.0.0.1', 0), gsirc.IRCClient)
+    # any nick: the accounts check has its own tests
+    self.server.allowed = None
     self.port = self.server.server_address[1]
     threading.Thread(target=self.server.serve_forever, daemon=True).start()
     self.players = []
@@ -239,6 +241,75 @@ class LineTests(IrcTestCase):
     for _ in range(3):
       p.sock.sendall(bytes(ircm.IRCMessage.from_str('A' * 30000)))
     self.assertTrue(closed(p))
+
+class LimitTests(IrcTestCase):
+  """What keeps the chat from serving as a bot network's command channel."""
+  def test_nothing_before_registering(self):
+    alice = self.player('alice')
+    anon = self.player()
+    anon.send(f'JOIN :{CHANNEL}')
+    self.assertTrue(any(' 451 ' in l for l in anon.read()))
+    anon.send(f'TOPIC {CHANNEL} :orders')
+    self.assertTrue(any(' 451 ' in l for l in anon.read()))
+    alice.send(f'PRIVMSG {CHANNEL} :alice%16777215%9%0%0%Arial%1hi')
+    self.assertFalse(any('PRIVMSG' in l for l in anon.read()))
+
+  def test_never_registered_dropped(self):
+    self.server.limits.timeout = 1
+    self.assertTrue(closed(self.player(), 3))
+
+  def test_channel_limits(self):
+    self.server.max_channel_members = 2
+    alice = self.player('alice')
+    self.player('bob')
+    carol = self.player('carol', join=False)
+    carol.send(f'JOIN :{CHANNEL}')
+    self.assertTrue(any(' 471 ' in l for l in carol.read()))
+    for i in range(1, gsirc.MAX_CHANNELS):
+      alice.send(f'JOIN :#LobbyGrp1.{i}')
+    alice.read()
+    alice.send('JOIN :#LobbyGrp1.99')
+    self.assertTrue(any(' 405 ' in l for l in alice.read()))
+
+  def test_message_rate(self):
+    alice, bob = self.player('alice'), self.player('bob')
+    alice.read()
+    bob.send(*[f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1message {i}' for i in range(2 * gsirc.MESSAGE_BURST)])
+    relayed = sum(' PRIVMSG ' in l for l in alice.read(1))
+    # the burst, and at most what refills while the messages arrive
+    self.assertTrue(gsirc.MESSAGE_BURST <= relayed <= gsirc.MESSAGE_BURST + 2, relayed)
+
+  def test_long_topic_cut(self):
+    alice = self.player('alice')
+    alice.send(f'TOPIC {CHANNEL} :' + 'x' * 500 + '\x07')
+    self.assertTrue(any(l.endswith(':' + 'x' * gsirc.MAX_TOPIC) for l in alice.read()))
+
+class LoggedInTests(IrcTestCase):
+  """A nick is an account logged in from the connection's address, for as long as it stays logged in."""
+  def test_nick_of_another_account(self):
+    self.server.allowed = lambda nick, ip: nick == 'alice'
+    mallory = Player(self.port, 'mallory')
+    self.players.append(mallory)
+    self.assertTrue(any(' 432 ' in l for l in mallory.read()))
+    alice = Player(self.port, 'alice')
+    self.players.append(alice)
+    self.assertTrue(any(' 001 alice ' in l for l in alice.read()))
+
+  def test_dropped_when_acting_after_logout(self):
+    logged = [True]
+    self.server.allowed = lambda nick, ip: logged[0]
+    alice = self.player('alice')
+    logged[0] = False
+    alice.send(f'PRIVMSG {CHANNEL} :alice%16777215%9%0%0%Arial%1still here?')
+    self.assertTrue(closed(alice))
+
+  def test_listener_dropped_after_logout(self):
+    logged = [True]
+    self.server.allowed = lambda nick, ip: logged[0]
+    self.server.limits.timeout = 1
+    bob = self.player('bob')
+    logged[0] = False
+    self.assertTrue(closed(bob, 3))
 
 if __name__ == '__main__':
   unittest.main()

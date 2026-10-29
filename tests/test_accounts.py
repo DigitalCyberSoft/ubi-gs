@@ -240,5 +240,46 @@ class RouterLoginTests(AccountTestCase):
     self.assertTrue(getattr(old.conn, 'closed', False))
     self.assertFalse(getattr(new.conn, 'closed', False))
 
+def age_sessions(seconds: int):
+  with accounts._transaction() as conn:
+    conn.execute('UPDATE sessions SET updated = updated - ?', (seconds,))
+
+class LoggedInTests(AccountTestCase):
+  """The IRC service asks whether a nick is a game still logged in from its address."""
+  def test_fresh_session(self):
+    accounts.bind_session('alice', '10.0.0.5', accounts.login('alice', 'one'))
+    self.assertTrue(accounts.logged_in('alice', '10.0.0.5'))
+    self.assertTrue(accounts.logged_in('ALICE', '10.0.0.5'))
+    self.assertFalse(accounts.logged_in('alice', '10.0.0.6'))
+    self.assertFalse(accounts.logged_in('bob', '10.0.0.5'))
+
+  def test_account_name(self):
+    # a taken name gives the next free one, which the game may use too
+    accounts.login('alice', 'one')
+    account = accounts.login('alice', 'two')
+    accounts.bind_session('alice', '10.0.0.6', account)
+    self.assertTrue(accounts.logged_in(account.name, '10.0.0.6'))
+
+  def test_stale_session(self):
+    accounts.bind_session('alice', '10.0.0.5', accounts.login('alice', 'one'))
+    age_sessions(accounts.SESSION_LIVE + 1)
+    self.assertFalse(accounts.logged_in('alice', '10.0.0.5'))
+    accounts.touch_session('alice', '10.0.0.5')
+    self.assertTrue(accounts.logged_in('alice', '10.0.0.5'))
+
+  def test_keep_session(self):
+    account = accounts.login('alice', 'one')
+    accounts.bind_session('alice', '10.0.0.5', account)
+    clt = client.TcpClient((FakeConn(), ('10.0.0.5', 50000)))
+    clt.account, clt.typed_name = account, 'alice'
+    age_sessions(accounts.SESSION_LIVE + 1)
+    # a message from the game refreshes its session...
+    accounts.keep_session(clt)
+    self.assertTrue(accounts.logged_in('alice', '10.0.0.5'))
+    # ...at most every SESSION_TOUCH seconds
+    age_sessions(accounts.SESSION_LIVE + 1)
+    accounts.keep_session(clt)
+    self.assertFalse(accounts.logged_in('alice', '10.0.0.5'))
+
 if __name__ == '__main__':
   unittest.main()
