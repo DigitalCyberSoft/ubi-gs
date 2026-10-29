@@ -1,5 +1,9 @@
 import argparse, os, re, sys
+import werkzeug.serving
 from flask import Flask, request, send_from_directory, abort, Response
+# the game services' modules (limits.py, ports.py), next to this directory
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import limits
 
 app = Flask(__name__)
 
@@ -85,6 +89,35 @@ def services_host():
             pass
     return None
 
+class Handler(werkzeug.serving.WSGIRequestHandler):
+    # a request is a few hundred bytes; a client that stopped sending held its thread for good
+    timeout = 30
+
+class LimitedServer(werkzeug.serving.ThreadedWSGIServer):
+    """
+    Werkzeug's threaded server with the game services' connection caps, in total and per address, which it lacks:
+    one address could open any number of connections, each holding a thread.
+    """
+    def __init__(self, host: str, port: int, wsgi_app, conn_limits: limits.ConnectionLimits = None):
+        self.limits = conn_limits or limits.ConnectionLimits()
+        self.admitted = {}
+        """Admitted requests and their client addresses."""
+        super().__init__(host, port, wsgi_app, handler=Handler)
+
+    def verify_request(self, request, client_address):
+        """Accepts a connection only within the connection limits."""
+        if not self.limits.acquire(client_address[0]):
+            print(f'Refused {client_address}: connection limit reached')
+            return False
+        self.admitted[request] = client_address[0]
+        return True
+
+    def shutdown_request(self, request):
+        ip = self.admitted.pop(request, None)
+        if ip is not None:
+            self.limits.release(ip)
+        super().shutdown_request(request)
+
 def get_args():
     parser = argparse.ArgumentParser(description='gsconnect.ubisoft.com web service')
     parser.add_argument('--host', default=os.environ.get('GSCONNECT_HOST', '0.0.0.0'),
@@ -98,7 +131,10 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     # a clear message and exit code if the port can't be opened (Flask would print a bare error)
-    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     import ports
     ports.check_bind('gsconnect', 'tcp', (args.host, args.port))
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    if args.debug:
+        app.run(host=args.host, port=args.port, debug=True)
+    else:
+        # Flask's app.run has no connection caps or timeout
+        LimitedServer(args.host, args.port, app).serve_forever()
