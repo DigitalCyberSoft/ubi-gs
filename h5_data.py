@@ -134,6 +134,8 @@ class H5_PlayerInfo:
       """idx = 4; local (private) IPv4"""
       self.int38 = 0
       """idx = 5; unknown value"""
+      self.rest = bytes()
+      """The fields after these, as the game wrote them."""
     else:
       # parse buffer
       pos = 0
@@ -170,6 +172,7 @@ class H5_PlayerInfo:
       else:
         raise ValueError(f"PlayerInfo: missing/invalid field - Int38 ({cur_idx})")
       pos += len(field)
+      self.rest = bytes(buf[pos:])
 
   @staticmethod
   def read_port_ipv4(buf: bytes):
@@ -229,343 +232,115 @@ class H5_PlayerInfo:
     field.data = write_u32(self.int38)
     field.size = len(field.data)
     buf.extend(field.write())
+    buf.extend(self.rest)
     return bytes(buf)
 
 class H5_RoomInfo:
-  """Data from `group.Room.group_info` buffer (HoMM5)."""
+  """Data from `group.Room.group_info` buffer (HoMM5).
+
+  Each game writes its own set of fields: Heroes V 2.1 writes 2-33 and 37-40, Hammers of Fate 2-33 and
+  34-36, Tribes of the East 2-11, 13-33 and 34-41. Every field is kept as the game wrote it, in its order
+  (`fields`); the server rewrites only the ids, the host's address and the players' entries. The other
+  fields it knows are read into the attributes below for information, and go back to the players as they
+  came, so a room info of any game is passed on whole."""
+  BASE_FIELDS = (2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    30, 31, 32, 33, 37, 38, 39, 40)
+  """Heroes V 2.1's fields, in its order: those of a room info built here (without a buffer)."""
+  REWRITTEN = (2, 3, 4, 22)
+  """The fields the server sets: the group and lobby server ids, the host's address and the players."""
+
   def __init__(self, buf: bytes = None):
-    if buf is None:
-      self.group_id: int = -1
-      """idx = 2"""
-      self.lobby_sv_id: int = -1
-      """idx = 3"""
-      self.host_ip = H5_IP()
-      """idx = 4"""
-      self.host_logic_init: bool = False
-      """idx = 6"""
-      self.group_name: str = ""
-      """idx = 7"""
-      self.password: str = ""
-      """idx = 8"""
-      self.is_pwd_protected: bool = False
-      """idx = 9"""
-      self.ghost_mode: bool = False
-      """idx = 10"""
-      self.quick_combat: bool = False
-      """idx = 11"""
-      self.fast_combat_turns: bool = False
-      """idx = 12"""
-      self.time_limit: int = 0
-      """idx = 13"""
-      self.difficulty_id: int = 0
-      """idx = 14"""
-      self.map_desc: str = ""
-      """idx = 15; map descriptor path (`AdvMapDesc`)"""
-      self.teams: list[int] = []
-      """idx = 19"""
-      self.max_players: int = 0
-      """idx = 20"""
-      self.map_size: int = 0
-      """idx = 21"""
-      self.player_infos: list[H5_PlayerInfo] = []
-      """idx = 22"""
-      self.game_version: int = 0
-      """idx = 23"""
-      self.is_saved: bool = False
-      """idx = 24"""
-      self.guid: str = ""
-      """idx = 25"""
-      self.ubi_send_results_wait: bool = False
-      """idx = 26"""
-      self.options: dict[str, tuple[int, str]] = {}
-      """idx = 27"""
-      self.is_arena: bool = False
-      """idx = 28"""
-      self.host_checksum: int = 0
-      """idx = 29"""
-      self.adventure_type: int = 0
-      """idx = 30"""
-      self.map_desc_tag: str = ""
-      """idx = 31"""
-      self.map_goal: str = ""
-      """idx = 32"""
-      self.arena_map_name: str = ""
-      """idx = 33"""
-      self.int104: int = 0
-      """idx = 37"""
-      self.int108: int = 0
-      """idx = 38"""
-      self.combat_turn_speed: int = 0
-      """idx = 39"""
-      self.flag110: bool = False
-      """idx = 40"""
-    else:
-      # parse buffer
-      pos = 0
-      
-      field = H5_Stream(buf)
-      cur_idx = 2
-      if field.id == cur_idx and field.size == 4:
-        self.group_id = c_int32(read_u32(field.data)).value
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - GroupID ({cur_idx})")
-      pos += len(field)
+    self.group_id: int = -1
+    """idx = 2"""
+    self.lobby_sv_id: int = -1
+    """idx = 3"""
+    self.host_ip = H5_IP()
+    """idx = 4"""
+    self.host_logic_init: bool = False
+    """idx = 6"""
+    self.group_name: str = ""
+    """idx = 7"""
+    self.password: str = ""
+    """idx = 8"""
+    self.is_pwd_protected: bool = False
+    """idx = 9"""
+    self.ghost_mode: bool = False
+    """idx = 10"""
+    self.quick_combat: bool = False
+    """idx = 11"""
+    self.fast_combat_turns: bool = False
+    """idx = 12"""
+    self.time_limit: int = 0
+    """idx = 13"""
+    self.difficulty_id: int = 0
+    """idx = 14"""
+    self.map_desc: str = ""
+    """idx = 15; map descriptor path (`AdvMapDesc`)"""
+    self.teams: list[int] = []
+    """idx = 19"""
+    self.max_players: int = 0
+    """idx = 20"""
+    self.map_size: int = 0
+    """idx = 21"""
+    self.player_infos: list[H5_PlayerInfo] = []
+    """idx = 22"""
+    self.game_version: int = 0
+    """idx = 23"""
+    self.is_saved: bool = False
+    """idx = 24"""
+    self.guid: str = ""
+    """idx = 25"""
+    self.ubi_send_results_wait: bool = False
+    """idx = 26"""
+    self.options: dict[str, tuple[int, str]] = {}
+    """idx = 27"""
+    self.is_arena: bool = False
+    """idx = 28"""
+    self.host_checksum: int = 0
+    """idx = 29"""
+    self.adventure_type: int = 0
+    """idx = 30"""
+    self.map_desc_tag: str = ""
+    """idx = 31"""
+    self.map_goal: str = ""
+    """idx = 32"""
+    self.arena_map_name: str = ""
+    """idx = 33"""
+    self.int104: int = 0
+    """idx = 37"""
+    self.int108: int = 0
+    """idx = 38"""
+    self.combat_turn_speed: int = 0
+    """idx = 39"""
+    self.flag110: bool = False
+    """idx = 40"""
+    self.fields: list[tuple[int, bytes]] = None
+    """Every field (id, data) in the game's order; `None` for a room info built here."""
+    if buf is not None:
+      self.read(buf)
 
+  def read(self, buf: bytes):
+    """Reads the fields of a room info's data stream."""
+    self.fields = []
+    seen = set()
+    pos = 0
+    while pos < len(buf):
       field = H5_Stream(buf[pos:])
-      cur_idx = 3
-      if field.id == cur_idx and field.size == 4:
-        self.lobby_sv_id = c_int32(read_u32(field.data)).value
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - LobbySrvID ({cur_idx})")
       pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 4
-      if field.id == cur_idx and field.size == 18:
-        self.host_ip = H5_Serializer.read_ipv4(field.data, True)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - host IP ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 6
-      if field.id == cur_idx and field.size == 1:
-        self.host_logic_init = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - bHostLogicInitialized ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 7
-      if field.id == cur_idx and field.size > 0:
-        self.group_name = field.data.decode("utf-16-le")
-      elif field.size == 0:
-        self.group_name = ""
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - GroupName ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 8
-      if field.id == cur_idx and field.size > 0:
-        self.password = field.data.decode("utf-16-le")
-      elif field.size == 0:
-        self.password = ""
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Password ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 9
-      if field.id == cur_idx and field.size == 1:
-        self.is_pwd_protected = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - IsPasswordProtected ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 10
-      if field.id == cur_idx and field.size == 1:
-        self.ghost_mode = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - GhostMode ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 11
-      if field.id == cur_idx and field.size == 1:
-        self.quick_combat = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - QuickCombat ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 12
-      if field.id == cur_idx and field.size == 1:
-        self.fast_combat_turns = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - FastCombatTurns ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 13
-      if field.id == cur_idx and field.size == 4:
-        self.time_limit = c_int32(read_u32(field.data)).value
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - TimeLimit ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 14
-      if field.id == cur_idx and field.size == 4:
-        self.difficulty_id = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - DifficultyID ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 15
-      if field.id == cur_idx:
-        self.map_desc = H5_RoomInfo.read_nested_string(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - MapDescriptor ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 19
-      if field.id == cur_idx:
-        self.teams = H5_RoomInfo.read_uints(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Teams ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 20
-      if field.id == cur_idx and field.size == 4:
-        self.max_players = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - MaxPlayers ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 21
-      if field.id == cur_idx and field.size == 4:
-        self.map_size = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - MapSize ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 22
-      if field.id == cur_idx:
-        self.player_infos = H5_RoomInfo.read_player_infos(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - PlayerInfos ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 23
-      if field.id == cur_idx and field.size == 4:
-        self.game_version = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - GameVersion ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 24
-      if field.id == cur_idx and field.size == 1:
-        self.is_saved = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - IsSaved ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 25
-      if field.id == cur_idx and field.size == 16:
-        self.guid = f"{field.data[:4].hex()}-{field.data[4:6].hex()}-{field.data[6:8].hex()}-{field.data[8:10].hex()}-{field.data[10:].hex()}"
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - GUID ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 26
-      if field.id == cur_idx and field.size == 1:
-        self.ubi_send_results_wait = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - SendResults ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 27
-      if field.id == cur_idx:
-        self.options = H5_RoomInfo.read_options(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Options ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 28
-      if field.id == cur_idx and field.size == 1:
-        self.is_arena = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - IsArena ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 29
-      if field.id == cur_idx and field.size == 4:
-        self.host_checksum = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - HostChecksum ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 30
-      if field.id == cur_idx and field.size == 4:
-        self.adventure_type = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - AdventureType ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 31
-      if field.id == cur_idx:
-        self.map_desc_tag = H5_RoomInfo.read_nested_string(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - MapDescTag ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 32
-      if field.id == cur_idx and field.size > 0:
-        self.map_goal = field.data.decode(GAME_ENCODING)
-      elif field.size == 0:
-        self.map_goal = ""
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - MapGoal ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 33
-      if field.id == cur_idx and field.size > 0:
-        self.arena_map_name = field.data.decode(GAME_ENCODING)
-      elif field.size == 0:
-        self.arena_map_name = ""
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - ArenaMapName ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 37
-      if field.id == cur_idx and field.size == 4:
-        self.int104 = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Int104 ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 38
-      if field.id == cur_idx and field.size == 4:
-        self.int108 = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Int108 ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 39
-      if field.id == cur_idx and field.size == 4:
-        self.combat_turn_speed = read_u32(field.data)
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - CombatTurnSpeed ({cur_idx})")
-      pos += len(field)
-
-      field = H5_Stream(buf[pos:])
-      cur_idx = 40
-      if field.id == cur_idx and field.size == 1:
-        self.flag110 = field.data[0] != 0
-      else:
-        raise ValueError(f"RoomInfo: missing/invalid field - Flag110 ({cur_idx})")
-      pos += len(field)
+      known = ROOM_INFO_FIELDS.get(field.id)
+      if field.id in H5_RoomInfo.REWRITTEN:
+        # written from one value: a second copy would go out unchecked
+        if field.id in seen:
+          raise ValueError(f"RoomInfo: repeated field ({field.id})")
+        seen.add(field.id)
+        setattr(self, known[0], known[1](field.data))
+      elif known is not None:
+        try:
+          setattr(self, known[0], known[1](field.data))
+        except (ValueError, IndexError, KeyError):
+          # another game's field of this id: it goes back as it came all the same
+          pass
+      self.fields.append((field.id, bytes(field.data)))
 
   @staticmethod
   def read_nested_string(buf: bytes):
@@ -804,170 +579,18 @@ class H5_RoomInfo:
     return bytes(buf)
   
   def serialize(self):
-    """Returns a serialized buffer."""
+    """Returns a serialized buffer: the fields as they came, but those the server sets."""
+    fields = self.fields if self.fields is not None else [(idx, None) for idx in H5_RoomInfo.BASE_FIELDS]
     buf = bytearray()
-    field = H5_Stream()
-
-    field.id = 2
-    field.data = write_u32(c_uint32(self.group_id).value)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 3
-    field.data = write_u32(c_uint32(self.lobby_sv_id).value)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 4
-    field.data = H5_Serializer.write_ipv4(self.host_ip)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 6
-    field.data = bytes([1 if self.host_logic_init else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 7
-    field.data = self.group_name.encode("utf-16-le")
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 8
-    field.data = self.password.encode("utf-16-le")
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 9
-    field.data = bytes([1 if self.is_pwd_protected else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 10
-    field.data = bytes([1 if self.ghost_mode else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 11
-    field.data = bytes([1 if self.quick_combat else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 12
-    field.data = bytes([1 if self.fast_combat_turns else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 13
-    field.data = write_u32(c_uint32(self.time_limit).value)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 14
-    field.data = write_u32(self.difficulty_id)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 15
-    field.data = H5_RoomInfo.write_nested_string(self.map_desc)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 19
-    field.data = H5_RoomInfo.write_uints(self.teams)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 20
-    field.data = write_u32(self.max_players)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 21
-    field.data = write_u32(self.map_size)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 22
-    field.data = H5_RoomInfo.write_player_infos(self.player_infos)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 23
-    field.data = write_u32(self.game_version)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 24
-    field.data = bytes([1 if self.is_saved else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 25
-    field.data = UUID(self.guid).bytes
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 26
-    field.data = bytes([1 if self.ubi_send_results_wait else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 27
-    field.data = H5_RoomInfo.write_options(self.options)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 28
-    field.data = bytes([1 if self.is_arena else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 29
-    field.data = write_u32(self.host_checksum)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 30
-    field.data = write_u32(self.adventure_type)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 31
-    field.data = H5_RoomInfo.write_nested_string(self.map_desc_tag)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 32
-    field.data = self.map_goal.encode(GAME_ENCODING, errors="replace")
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 33
-    field.data = self.arena_map_name.encode(GAME_ENCODING, errors="replace")
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 37
-    field.data = write_u32(self.int104)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 38
-    field.data = write_u32(self.int108)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 39
-    field.data = write_u32(self.combat_turn_speed)
-    field.size = len(field.data)
-    buf.extend(field.write())
-
-    field.id = 40
-    field.data = bytes([1 if self.flag110 else 0])
-    field.size = len(field.data)
-    buf.extend(field.write())
-
+    for idx, data in fields:
+      if data is None or idx in H5_RoomInfo.REWRITTEN:
+        attr, _, write = ROOM_INFO_FIELDS[idx]
+        data = write(getattr(self, attr))
+      field = H5_Stream()
+      field.id = idx
+      field.data = data
+      field.size = len(data)
+      buf.extend(field.write())
     return bytes(buf)
 
 class H5_Room:
@@ -1101,3 +724,56 @@ class H5_Serializer:
     field.data = ip.serialize()
     field.size = len(field.data)
     return field.write()
+
+def _sized(size: int, read):
+  """A reader that wants the field to be `size` bytes."""
+  def reader(data: bytes):
+    if len(data) != size:
+      raise ValueError(f"RoomInfo: {len(data)} bytes, not {size}")
+    return read(data)
+  return reader
+
+def _read_guid(data: bytes):
+  return f"{data[:4].hex()}-{data[4:6].hex()}-{data[6:8].hex()}-{data[8:10].hex()}-{data[10:].hex()}"
+
+_bool = (_sized(1, lambda d: d[0] != 0), lambda v: bytes([1 if v else 0]))
+_int32 = (_sized(4, lambda d: c_int32(read_u32(d)).value), lambda v: write_u32(c_uint32(v).value))
+_uint32 = (_sized(4, read_u32), write_u32)
+_utf16 = (lambda d: d.decode("utf-16-le"), lambda v: v.encode("utf-16-le"))
+_text = (lambda d: d.decode(GAME_ENCODING), lambda v: v.encode(GAME_ENCODING, errors="replace"))
+
+ROOM_INFO_FIELDS = {
+  2: ("group_id", *_int32),
+  3: ("lobby_sv_id", *_int32),
+  4: ("host_ip", lambda d: H5_Serializer.read_ipv4(d, True), H5_Serializer.write_ipv4),
+  6: ("host_logic_init", *_bool),
+  7: ("group_name", *_utf16),
+  8: ("password", *_utf16),
+  9: ("is_pwd_protected", *_bool),
+  10: ("ghost_mode", *_bool),
+  11: ("quick_combat", *_bool),
+  12: ("fast_combat_turns", *_bool),
+  13: ("time_limit", *_int32),
+  14: ("difficulty_id", *_uint32),
+  15: ("map_desc", H5_RoomInfo.read_nested_string, H5_RoomInfo.write_nested_string),
+  19: ("teams", H5_RoomInfo.read_uints, H5_RoomInfo.write_uints),
+  20: ("max_players", *_uint32),
+  21: ("map_size", *_uint32),
+  22: ("player_infos", H5_RoomInfo.read_player_infos, H5_RoomInfo.write_player_infos),
+  23: ("game_version", *_uint32),
+  24: ("is_saved", *_bool),
+  25: ("guid", _sized(16, _read_guid), lambda v: UUID(v).bytes),
+  26: ("ubi_send_results_wait", *_bool),
+  27: ("options", H5_RoomInfo.read_options, H5_RoomInfo.write_options),
+  28: ("is_arena", *_bool),
+  29: ("host_checksum", *_uint32),
+  30: ("adventure_type", *_uint32),
+  31: ("map_desc_tag", H5_RoomInfo.read_nested_string, H5_RoomInfo.write_nested_string),
+  32: ("map_goal", *_text),
+  33: ("arena_map_name", *_text),
+  37: ("int104", *_uint32),
+  38: ("int108", *_uint32),
+  39: ("combat_turn_speed", *_uint32),
+  40: ("flag110", *_bool),
+}
+"""The room info fields this server knows (Heroes V 2.1's): (attribute, read, write) by field id."""

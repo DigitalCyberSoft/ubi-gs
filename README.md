@@ -99,7 +99,7 @@ To go back to normal, remove the line.
   ```
   For Steam, put `http_proxy=http://203.0.113.10:80 %command%` in the game's launch options.
 
-**Game versions:** gsconnect accepts the ids sent by all three games (read from their `H5_Game.exe`).
+**Game versions:** gsconnect accepts any game id; these are the ones the three games send (read from their `H5_Game.exe`).
 
 | Game | Version | `dp` sent to gsinit |
 |---|---|---|
@@ -107,7 +107,7 @@ To go back to normal, remove the line.
 | Hammers of Fate | 2.1 | `HEROES_f4609f85d388479e` |
 | Tribes of the East | 3.1 | `HEROES_29988429c481f219` |
 
-Only 1.60 has been tested in-game against these services; the expansions are untested past gsinit.
+Each game writes its own room info fields (Hammers of Fate and Tribes of the East add some and leave others out); the lobby keeps them all and passes them on, so a room of any game works. Tribes of the East has been played against these services from creating a game to passing a turn; Hammers of Fate the same against ubi-gs-go, whose lobby reads the room info the same way.
 
 **Logging in:** open Multi Player → ubi.com and type any name and password. There's no registration; the first login creates the account (#43).
 - **Logging in again with the same name and password** gets the same account back, with its friends, rating and profile data.

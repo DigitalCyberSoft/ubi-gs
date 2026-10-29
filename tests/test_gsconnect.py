@@ -29,8 +29,16 @@ class GSConnectTests(unittest.TestCase):
   def test_missing_game_id(self):
     self.assertEqual(self.client.get('/gsinit.php').status_code, 400)
 
-  def test_unknown_game_id(self):
-    self.assertEqual(self.client.get('/gsinit.php?dp=NOPE').status_code, 400)
+  def test_any_game_id(self):
+    # no game is refused for being unknown: another version, or another game, gets the services too
+    for dp in ['HEROES_0123456789abcdef', 'NOPE']:
+      res = self.client.get(f'/gsinit.php?dp={dp}')
+      self.assertEqual(res.status_code, 200, dp)
+      self.assertIn(b'RouterPort0=7777', res.data)
+
+  def test_malformed_game_id(self):
+    for dp in ['a%20b', '', 'x' * 65]:
+      self.assertEqual(self.client.get(f'/gsinit.php?dp={dp}').status_code, 400, dp)
 
   def test_debug_off_by_default(self):
     sys.argv = ['gsconnect.py']

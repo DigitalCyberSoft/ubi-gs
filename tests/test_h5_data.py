@@ -145,6 +145,13 @@ class H5_PlayerInfoTests(unittest.TestCase):
     self.assertIn(b'caf\xe9', buf)
     self.assertEqual(h5_data.H5_PlayerInfo(buf).serialize(), buf)
 
+  def test_later_fields(self):
+    # fields after the known ones go back as they came
+    buf = bytes.fromhex("02 0a 61 6c 69 63 65 03 24 02 20 02 00 22 b8 7f 00 00 01" + " 00" * 8 + " 04 2c 02 04 b8 22 03 20 c0 a8 00 29" + " 00" * 12 + " 05 08 ff ff ff ff 06 02 07")
+    info = h5_data.H5_PlayerInfo(buf)
+    self.assertEqual(info.rest, bytes([6, 2, 7]))
+    self.assertEqual(info.serialize(), buf)
+
 class H5_RoomInfoRoundTripTests(unittest.TestCase):
   """Room info sent back to the players must match what the host sent."""
   def test_two_players(self):
@@ -165,6 +172,75 @@ class H5_RoomInfoRoundTripTests(unittest.TestCase):
     info = h5_data.H5_Serializer().deserialize_roominfo(buf)
     self.assertEqual([(p.key, p.username) for p in info.player_infos], [(1, 'bob'), (0, 'alice')])
     self.assertEqual(h5_data.H5_Serializer().serialize_roominfo(info), buf)
+
+class H5_ExpansionRoomInfoTests(unittest.TestCase):
+  """The room info of Hammers of Fate and Tribes of the East, as each sends it in CREATE_ROOM: their fields
+  differ from Heroes V's, and each must come back as it came but for the fields the server sets."""
+  HOF = bytes.fromhex(
+      "040804000000018d0300000208ffffffff0308ffffffff04240220000000000000000000000000000000000602000730"
+      "61006c00690063006500270073002000470061006d00650008000902000a02000b02000c02000d08ffffffff0e080100"
+      "00000f7602722f4d6170732f4d756c7469706c617965722f41314d332f41314d332f6d61702e7864622378706f696e74"
+      "6572282f4164764d61704465736329132001080200000002100100000001000000140802000000150802000000161803"
+      "080000000004080d0000001708010002001802001920000000000000000000000000000000001a02001b540308010000"
+      "0004080d00000001206175746f736176655f656e61626c65640214020800000000030430001c02001d0868b086741e08"
+      "010000001f8402802f4d6170732f4d756c7469706c617965722f41314d332f41314d332f6d61702d7461672e78646223"
+      "78706f696e746572282f4164764d61704465736354616729200a676f616c33210022020023b002020003080100000004"
+      "0800000000058e02080000000003080000000004340330656d707479206f626a65637420706c616365686f6c64657205"
+      "0800000000060800000000070200080c02080000000009000a02000b0200240200000002000500"
+  )
+  TOE = bytes.fromhex(
+      "04080400000001030400000208ffffffff0308ffffffff04240220000000000000000000000000000000000602000730"
+      "6300610072006f006c00270073002000470061006d00650008000902000a02000b02000d08ffffffff0e08010000000f"
+      "6e026a2f4d6170732f4d756c7469706c617965722f41324d31332f6d61702e7864622378706f696e746572282f416476"
+      "4d6170446573632913200108020000000210010000000100000014080200000015080100000016180308000000000408"
+      "0d0000001708010003001802001920000000000000000000000000000000001a02001b5403080100000004080d000000"
+      "01206175746f736176655f656e61626c65640214020800000000030430001c02001d08a0fffb361e08010000001f7c02"
+      "782f4d6170732f4d756c7469706c617965722f41324d31332f6d61702d7461672e7864622378706f696e746572282f41"
+      "64764d61704465736354616729200a676f616c33210022020023d2020200030801000000040800000000050006ac0208"
+      "0000000003080000000004340330656d707479206f626a65637420706c616365686f6c64657205080000000006080000"
+      "0000070200080c02080000000009000a02000b02000c08000000000d08000000000e0200240200250800000000260800"
+      "000000270800000000280200293c02080000000003080000000004080000000005080000000006080000000000000200"
+      "0500"
+  )
+  BASE = [2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+
+  def check(self, buf, ids, version):
+    info = h5_data.H5_Serializer().deserialize_roominfo(buf)
+    self.assertEqual([idx for idx, _ in info.fields], ids)
+    self.assertEqual(info.game_version, version)
+    self.assertEqual(info.group_id, -1)
+    self.assertEqual(h5_data.H5_Serializer().serialize_roominfo(info), buf)
+    # as the lobby does: the ids, the host and a player
+    info.group_id, info.lobby_sv_id = 1000, 1
+    info.host_ip.ip, info.host_ip.port = "10.0.0.2", 9000
+    player = h5_data.H5_PlayerInfo()
+    player.username = "alice"
+    info.player_infos.append(player)
+    again = h5_data.H5_Serializer().deserialize_roominfo(h5_data.H5_Serializer().serialize_roominfo(info))
+    self.assertEqual((again.group_id, again.lobby_sv_id, again.host_ip.ip, again.host_ip.port), (1000, 1, "10.0.0.2", 9000))
+    self.assertEqual([p.username for p in again.player_infos], ["alice"])
+    for (idx, data), (_, orig) in zip(again.fields, info.fields):
+      if idx not in h5_data.H5_RoomInfo.REWRITTEN:
+        self.assertEqual(data, orig, idx)
+
+  def test_hammers_of_fate(self):
+    # 34-36 after 33, no 37-40
+    self.check(self.HOF, self.BASE + [34, 35, 36], 0x20001)
+
+  def test_tribes_of_the_east(self):
+    # no 12; 34-41 after 33
+    self.check(self.TOE, [i for i in self.BASE if i != 12] + [34, 35, 36, 37, 38, 39, 40, 41], 0x30001)
+
+  def test_unknown_field(self):
+    data = h5_data.H5_Serializer().data_stream(self.HOF).data + bytes([99, 10]) + b"later"
+    info = h5_data.H5_RoomInfo(data)
+    self.assertEqual(info.fields[-1], (99, b"later"))
+    self.assertTrue(info.serialize().endswith(bytes([99, 10]) + b"later"))
+
+  def test_repeated_host(self):
+    data = h5_data.H5_Serializer().data_stream(self.HOF).data
+    host = bytes([4, 0x24, 2, 0x20]) + bytes(16)
+    self.assertRaises(ValueError, h5_data.H5_RoomInfo, data + host)
 
 class H5_IPTests(unittest.TestCase):
   """Tests for address structures of `RoomInfo` and `PlayerInfo`."""
