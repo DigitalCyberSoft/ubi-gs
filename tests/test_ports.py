@@ -1,4 +1,4 @@
-import sys, os, errno, re, signal, socket, subprocess, tempfile, textwrap, unittest
+import sys, os, errno, re, signal, socket, subprocess, tempfile, textwrap, threading, unittest
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 homm5_dir = os.path.join(root_dir, 'homm5')
@@ -154,17 +154,26 @@ class LauncherTests(unittest.TestCase):
       self.addCleanup(signal.signal, signal.SIGINT, handlers[0])
       self.addCleanup(signal.signal, signal.SIGTERM, handlers[1])
       read, write = os.pipe()
+      # what earlier tests printed may still be in sys.stdout's buffer (128 KiB when stdout isn't a terminal,
+      # from Python 3.14): it goes to the real stdout, not into the pipe
+      sys.stdout.flush()
       saved = os.dup(1)
+      # the pipe is read while the launcher runs: it holds 64 KiB, and once full, every print blocks for good
+      chunks = []
+      reader = threading.Thread(target=lambda: chunks.extend(iter(lambda: os.read(read, 65536), b'')))
+      reader.start()
       try:
         os.dup2(write, 1)
         code = launch.main(['ok', 'bad'], firewall_check=lambda: None)
       finally:
         sys.stdout.flush()
         os.dup2(saved, 1)
+        os.close(saved)
         os.close(write)
         launch.HERE = here
-      out = os.read(read, 65536).decode()
+      reader.join(timeout=5)
       os.close(read)
+      out = b''.join(chunks).decode()
       self.assertEqual(code, 2)
       self.assertIn("launch: bad failed to start (exit code 2): bad can't listen on TCP port 7777", out)
       self.assertTrue(os.path.exists(marker), 'the other service was not stopped')
