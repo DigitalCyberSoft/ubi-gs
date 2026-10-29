@@ -52,11 +52,12 @@ CHAT_FIELDS = 7
 SYSTEM_LINE = '2'
 """Leading type digit of the game's own announcements, e.g. `2alice has joined the game`."""
 
-def sanitize_chat(nick: str, payload: str):
+def sanitize_chat(nick: str, payload: str, about=None):
   """
   Returns the chat payload as it may be relayed from `nick`, or None to drop it.
   The game shows the name and formatting from the payload, not the IRC nick, so the name is forced to the sender's,
-  the formatting fields must be plain numbers and a font name, and announcements must be about the sender.
+  the formatting fields must be plain numbers and a font name, and announcements must be about the sender, or pass
+  `about` (if set), which is given the announcement's text without its type digit.
   """
   if payload.startswith(':'):
     payload = payload[1:]
@@ -70,7 +71,7 @@ def sanitize_chat(nick: str, payload: str):
     return None
   # control characters could end the line or confuse the game's text renderer
   text = re.sub(r'[\x00-\x1f\x7f]', '', text)
-  if text.startswith(SYSTEM_LINE) and not text[1:].startswith(f'{nick} '):
+  if text.startswith(SYSTEM_LINE) and not text[1:].startswith(f'{nick} ') and (about is None or not about(text[1:])):
     return None
   return ':' + '%'.join([nick, color, size, n1, n2, font, text])
 
@@ -424,7 +425,12 @@ class IRCClient(socketserver.BaseRequestHandler):
       raise IRCError.from_name('notregistered', ':You have not registered')
     if not self.allow():
       return
-    chat = sanitize_chat(self.nick, msg)
+    # the host of a room announces the players joining and leaving it ("bob has joined the game") in the room's
+    # channel; any other announcement must be about the sender
+    about = None
+    if self.server.announces is not None and target.startswith('#'):
+      about = lambda text: self.server.announces(self.nick, target, text)
+    chat = sanitize_chat(self.nick, msg, about)
     if chat is None:
       log.warning(f'dropped {cmd} from {self.client_ident()}: {msg!r}')
       return
@@ -597,6 +603,8 @@ class IRCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Admitted requests and their client addresses."""
     self.allowed = accounts.logged_in
     """Whether a nick may be used from an address: an account logged in from there (None: any nick)."""
+    self.announces = accounts.announces
+    """Whether a nick may announce someone else in a channel: a room's host its players (None: nobody else)."""
     self.max_channel_members = MAX_CHANNEL_MEMBERS
 
     super().__init__(*args, **kwargs)
