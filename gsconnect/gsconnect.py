@@ -12,6 +12,9 @@ static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 app.config['HOMM5'] = os.path.join(static_dir, 'homm5')
 app.config['SP3'] = os.path.join(static_dir, 'sp3')
 
+SPLINTER_CELL_IDS = {'SPLINTERCELL3PS2US', 'SPLINTERCELL3PC', 'SPLINTERCELL3PCCOOP', 'SPLINTERCELL3PCADVERS'}
+"""Splinter Cell: Chaos Theory's game ids, served their own file."""
+
 @app.route('/<php_filename>', methods=['GET'])
 def get(php_filename: str) -> Response:
     """The initial request for game server discovery. Returns an `.ini` file with available services."""
@@ -22,8 +25,9 @@ def get(php_filename: str) -> Response:
     if dp is None:
         return 'Missing game id', 400
 
-    # remove HoMM5 hash
-    if re.search("^HEROES_[a-f0-9]{16}$", dp) is not None:
+    # Heroes V and its expansions send HEROES_ and 16 hex digits, one per game and version; any game id
+    # but Splinter Cell's gets the services, none is refused for being unknown
+    if re.fullmatch(r"[A-Za-z0-9_]{1,64}", dp) is not None and dp not in SPLINTER_CELL_IDS:
         dp = "HEROES_5"
 
     if php_filename=='gsinit.php':
@@ -55,10 +59,10 @@ def get(php_filename: str) -> Response:
                 ini_file = 'GS.ini'
                 user = dp = request.args.get('user')
 
-            # Unknown
+            # not a game id
             case _:
-                print('Unknown game id')
-                return 'Unknown game id', 400
+                print('Malformed game id')
+                return 'Malformed game id', 400
         host = services_host()
         if game == 'HOMM5' and host:
             # the game services' address: wherever this request arrived, as the services do (homm5/h5.py)
