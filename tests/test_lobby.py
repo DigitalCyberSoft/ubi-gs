@@ -6,7 +6,7 @@ os.environ.setdefault('UBIGS_DB', ':memory:')
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))
-import client, gsm, lobby, h5_data
+import client, gsm, lobby, h5_data, limits, router_wm
 from data import List
 
 ROOM_INFO = bytes.fromhex(
@@ -517,6 +517,33 @@ class RoomLimitTests(unittest.TestCase):
       join_room(late, room_id)
     self.assertIsNone(late.room_id)
     self.assertEqual(len(lobby.room_members(int(room_id))), lobby.MAX_ROOM_MEMBERS)
+
+def lobby_list():
+  """The lobby list the router's wait module sends: {lobby id: (max members, members)}."""
+  header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+  buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['109', ['HEROES_657d2c2ebadc6a1d']]))))
+  res = router_wm.handle_req(client.TcpClient((FakeConn(), ('127.0.0.1', 60000))), gsm.Message(None, in_buf=buf))
+  return {int(entry[2]): (int(entry[12]), int(entry[13])) for entry in res.dl.lst[1][3]}
+
+class LobbyListTests(unittest.TestCase):
+  """The lobby list shows how many players each lobby has."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+    lobby.publish_counts()
+
+  def test_counts(self):
+    alice, bob = login('alice'), login('bob')
+    carol = make_client('carol')
+    request(carol, gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN, ['carol', '1', '192.168.0.41', '255.255.255.0', '0'])
+    request(carol, gsm.MESSAGE_TYPE.LOBBY_MSG, ['23', ['3', '', '384']])
+    # a host waiting in its room still counts for the lobby
+    join_room(alice, create_only(alice))
+    cap = limits.MAX_CONNECTIONS
+    self.assertEqual(lobby_list(), {1: (cap, 2), 2: (cap, 0), 3: (cap, 1)})
+    lobby.client_gone(bob)
+    request(carol, gsm.MESSAGE_TYPE.LOBBY_MSG, ['8', ['3']])
+    self.assertEqual(lobby_list(), {1: (cap, 1), 2: (cap, 0), 3: (cap, 0)})
 
 if __name__ == '__main__':
   unittest.main()

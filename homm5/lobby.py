@@ -234,6 +234,19 @@ def leave_lobby(clt: client.TcpClient):
   clt.lobby_id = None
   if lobby_id is not None:
     send_member_leave(clt, lobby_id, lobby_members(lobby_id))
+    publish_counts()
+
+def publish_counts():
+  """Shares the number of players in each lobby (its rooms included) with the router, whose lobby list shows them."""
+  counts: dict[int, int] = {}
+  for member in g_clients:
+    if member.lobby_id is not None:
+      counts[member.lobby_id] = counts.get(member.lobby_id, 0) + 1
+  try:
+    accounts.set_lobby_counts(counts)
+  except Exception as err:
+    # the counts are only shown: they must not stop the lobby
+    print(f'Lobby counts not shared: {err!r}')
 
 def new_match(group_id: int):
   """Starts a rated match of the room, returns its id."""
@@ -310,6 +323,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           clt.lobby_id = lobby_id
           res = gsm.JoinLobbyResponse(req)
           send_member_join(clt, lobby_id, lobby_members(lobby_id))
+          publish_counts()
         case gsm.LOBBY_MSG.JOIN_ROOM:
           group_id = int(req.dl.lst[1][0])
           flags = int(req.dl.lst[1][2]) # LSM (iconfig, group flags)
@@ -463,6 +477,8 @@ def handle_client(clt: client.TcpClient):
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   ports.bind(sock, SERVER_ADDRESS, "lobby")
+  # nobody is in a lobby yet: counts left by a previous run go
+  publish_counts()
   print(f"Lobby server is listening on port {SERVER_ADDRESS[1]}")
   sock.listen(5)
     

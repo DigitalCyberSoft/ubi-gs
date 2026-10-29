@@ -111,6 +111,9 @@ def _migrate(conn: sqlite3.Connection):
       PRAGMA user_version = 1;
       COMMIT;
     ''')
+  # live players per lobby, which the lobby service starts over at every start: not a schema change (the Go port
+  # opens the same file and has no use for it)
+  conn.execute('CREATE TABLE IF NOT EXISTS lobby_members (lobby INTEGER PRIMARY KEY, members INTEGER NOT NULL)')
 
 def db() -> sqlite3.Connection:
   """The open database. An unreadable file is moved aside (`.corrupt-<time>`) and a new one started."""
@@ -236,6 +239,18 @@ def account_name(typed: str, ip: str) -> str:
   """The account name of the game at `ip` that logged in as `typed`; `typed` if there's no session."""
   account = session(typed, ip)
   return account.name if account else typed
+
+# players per lobby: the lobby service counts them, the router's lobby list (another process) shows them
+
+def set_lobby_counts(counts: dict[int, int]):
+  """Replaces the number of players in each lobby."""
+  with _transaction() as conn:
+    conn.execute('DELETE FROM lobby_members')
+    conn.executemany('INSERT INTO lobby_members (lobby, members) VALUES (?, ?)', counts.items())
+
+def lobby_counts() -> dict[int, int]:
+  """The number of players in each lobby that has any."""
+  return dict(_query('SELECT lobby, members FROM lobby_members'))
 
 # whether a game is still logged in: the router and its wait module refresh its session while it talks to them,
 # at least every 30 s while it is online; the IRC service, another process, asks
