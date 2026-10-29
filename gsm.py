@@ -312,7 +312,7 @@ class Message:
     return self.dl
 
 MAX_MESSAGE_SIZE = 256 * 1024
-"""Largest message accepted from a game (profile data is at most 64 KiB)."""
+"""Largest message accepted from a game."""
 
 class MessageReader:
   """Cuts a connection's byte stream into messages by the size in each header.
