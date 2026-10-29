@@ -7,7 +7,6 @@ import argparse, errno, logging, re, select, socket, socketserver, time, typing
 from irc.client import NickMask
 from irc.events import codes
 import jaraco.logging
-from jaraco.stream import buffer
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
@@ -15,6 +14,12 @@ import ircm, h5, limits, utils, ports, firewall
 
 SERVER_ADDRESS = h5.ENDPOINTS["irc"]
 """Address of the IRC service."""
+
+LINE_SEP = re.compile(rb'\r?\n')
+"""End of an IRC line."""
+
+MAX_LINE = 0xFFFF
+"""Longest unfinished line kept; a client sending more without a line end is dropped."""
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +94,7 @@ class IRCClient(socketserver.BaseRequestHandler):
     self.send_queue = []  # Messages to send to client (strings)
     self.channels = {}  # Channels the client is in
     self.pending = b''  # Received bytes of an incomplete frame
+    self.line = bytearray()  # Received bytes of an unfinished line
     self.last_seen = time.monotonic()  # Last data from the client
     self.pinged = False  # A PING is out since `last_seen`
 
@@ -96,7 +102,6 @@ class IRCClient(socketserver.BaseRequestHandler):
 
   def handle(self):
     log.info('Client connected: %s', self.client_ident())
-    self.buffer = buffer.LineBuffer()
 
     try:
       while True:
@@ -157,12 +162,20 @@ class IRCClient(socketserver.BaseRequestHandler):
       self._handle_lines(msg)
 
   def _handle_lines(self, msg: ircm.IRCMessage):
-    self.buffer.feed(msg.payload)
-    for line in self.buffer:
-      # the game's bytes, one character each, so chat comes back as it was sent
-      line = utils.game_str(line)
-      print(f'req: {line}')
-      self._handle_line(line)
+    self.line += msg.payload
+    # only a line end in this payload can finish a line: splitting the whole buffer for every frame let a
+    # stream of tiny frames rescan it each time, and nothing capped it
+    if b'\n' in msg.payload:
+      *lines, rest = LINE_SEP.split(self.line)
+      self.line = bytearray(rest)
+      for line in lines:
+        # the game's bytes, one character each, so chat comes back as it was sent
+        line = utils.game_str(bytes(line))
+        print(f'req: {line}')
+        self._handle_line(line)
+    if len(self.line) > MAX_LINE:
+      log.warning(f'closing {self.client_ident()}: line too long')
+      raise self.Disconnect()
 
   def _handle_line(self, line: str):
     response = None

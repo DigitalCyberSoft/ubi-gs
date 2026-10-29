@@ -212,5 +212,33 @@ class ProtocolTests(IrcTestCase):
     bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1hi again')
     self.assertTrue(any('1hi again' in l for l in new.read()))
 
+def closed(p: Player, wait: float = 2):
+  """The server closed the player's connection within `wait` seconds."""
+  p.sock.settimeout(wait)
+  try:
+    while p.sock.recv(4096):
+      pass
+    return True
+  except ConnectionError:
+    return True
+  except socket.timeout:
+    return False
+
+class LineTests(IrcTestCase):
+  def test_line_across_frames(self):
+    # one line in three frames, its CRLF split between the last two
+    p = self.player()
+    for part in ['NICK :al', 'ice\r', '\nUSER HEROES_657d2c2ebadc6a1d +i 0 :alice\r\n']:
+      p.sock.sendall(bytes(ircm.IRCMessage.from_str(part)))
+      time.sleep(0.05)
+    self.assertTrue(any(' 001 alice ' in l for l in p.read()))
+
+  def test_unfinished_line_capped(self):
+    # more than 64 KB without a line end closes the connection instead of filling the memory
+    p = self.player()
+    for _ in range(3):
+      p.sock.sendall(bytes(ircm.IRCMessage.from_str('A' * 30000)))
+    self.assertTrue(closed(p))
+
 if __name__ == '__main__':
   unittest.main()
