@@ -82,6 +82,47 @@ class LobbyRobustnessTests(unittest.TestCase):
     finally:
       sock.close()
 
+class FramingTests(unittest.TestCase):
+  """Messages split across reads, several in one read, and messages over 4 KB."""
+  def test_split_message(self):
+    for service in [router, lobby]:
+      sock = start(service)
+      try:
+        sock.sendall(STILLALIVE[:2])
+        threading.Event().wait(0.2)
+        sock.sendall(STILLALIVE[2:])
+        self.assertEqual(sock.recv(64)[4], 0x3A)
+      finally:
+        sock.close()
+
+  def test_coalesced_messages(self):
+    # the router used to read only the first message of a recv()
+    for service in [router, proxy]:
+      sock = start(service)
+      try:
+        sock.sendall(STILLALIVE * 3)
+        data = b''
+        while len(data) < 18:
+          data += sock.recv(64)
+        self.assertEqual(data, bytes([0, 0, 6, 1, 0x3A, 0x24]) * 3)
+      finally:
+        sock.close()
+
+  def test_large_profile(self):
+    import accounts
+    alice = accounts.login('framing', 'pw')
+    accounts.bind_session('framing', '127.0.0.1', alice)
+    sock = start(proxy_wm)
+    try:
+      blob = bytes(range(256)) * 40
+      payload = ['HEROES_657d2c2ebadc6a1d', '0', 'framing', '0', 'PUBLIC', blob, str(len(blob))]
+      sock.sendall(game_message(gsm.MESSAGE_TYPE.PROXY_HANDLER, ['1026', '7', payload]))
+      res = sock.recv(4096)
+      self.assertEqual(gsm.Message(None, in_buf=res).dl.lst, ['1026', '7', ['38', []]])
+      self.assertEqual(accounts.profile(alice, 'HEROES_657d2c2ebadc6a1d'), blob)
+    finally:
+      sock.close()
+
 class ProxyModuleTests(unittest.TestCase):
   """Proxy module handshakes."""
   def test_module_ready_not_echoed(self):

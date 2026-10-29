@@ -23,5 +23,12 @@ class BlowfishTests(unittest.TestCase):
     dec = cipher.decrypt(enc)
     self.assertEqual(dec, DATA)
 
+  def test_long_payloads(self):
+    # the length's high byte used to count x16: 300 bytes came back as 60
+    cipher = Cipher(b"SKJDHF$0maoijfn4i8$aJdnv1jaldifar93-AS_dfo;hjhC4jhflasnF3fnd")
+    for size in [255, 256, 300, 1000, 4097, 0xFFFF]:
+      data = bytes(i % 251 for i in range(size))
+      self.assertEqual(cipher.decrypt(cipher.encrypt(data)), data, size)
+
 if __name__ == '__main__':
   unittest.main()

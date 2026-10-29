@@ -25,6 +25,10 @@ class FakeConn:
   def __init__(self):
     self.sent: list[bytes] = []
 
+  def getsockname(self):
+    # the server address the game reached
+    return ('10.0.0.1', 7785)
+
   def sendall(self, data: bytes):
     self.sent.append(data)
 
@@ -76,7 +80,8 @@ class LobbyTests(unittest.TestCase):
     bob = login('bob')
     # bob gets everybody, alice gets bob
     self.assertEqual([m[0] for m in notifs(bob)[0][1][4]], ['alice', 'bob'])
-    self.assertEqual(notifs(alice), [['50', ['bob', '0', '1', '127.0.0.1', '192.168.0.41', b'', '0']]])
+    # the lobby never shows a member's addresses (#12)
+    self.assertEqual(notifs(alice), [['50', ['bob', '0', '1', '0.0.0.0', '0.0.0.0', b'', '0']]])
 
   def test_room_list(self):
     alice = login('alice')
@@ -134,16 +139,78 @@ class LobbyTests(unittest.TestCase):
       self.assertEqual(msgs[0][1][:2], [str(room_id), '64'])
       self.assertEqual(msgs[0][1][3:], [[], []])
 
+  def player_info(self, name: str):
+    """The game's own player data, as SET_PLAYER_INFO carries it: a PlayerInfo with its addresses."""
+    entry = h5_data.H5_PlayerInfo()
+    entry.username = name
+    entry.ext_ip.family = 2
+    entry.ext_ip.port = 8888
+    entry.ext_ip.ip = '203.0.113.7'
+    entry.local_port = 8888
+    entry.local_ip.ip = '192.168.0.41'
+    entry.int38 = 1500
+    return entry
+
   def test_set_player_info(self):
     alice = login('alice')
     bob = login('bob')
     notifs(alice)
-    res = request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    entry = self.player_info('bob')
+    data = h5_data.H5_Serializer().serialize_playerinfo(entry)
+    res = request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [data]])
     self.assertEqual(res.dl.lst, ['38', ['42']])
-    self.assertEqual(notifs(alice), [['66', ['bob', b'data']]])
+    # the lobby gets the data (the rating) without the addresses (#12)
+    scrubbed = lobby.scrub_player_info(entry)
+    expected = h5_data.H5_Serializer().serialize_playerinfo(scrubbed)
+    self.assertEqual(notifs(alice), [['66', ['bob', expected]]])
+    self.assertNotIn(bytes([203, 0, 113, 7]), expected)
+    self.assertNotIn(bytes([192, 168, 0, 41]), expected)
+    self.assertEqual(h5_data.H5_Serializer().deserialize_playerinfo(expected).int38, 1500)
     carol = login('carol')
     members = notifs(carol)[0][1][4]
-    self.assertEqual(members[1][4], b'data')
+    self.assertEqual(members[1][4], expected)
+    # data that isn't a PlayerInfo can't be checked for addresses: not passed on
+    notifs(alice)
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    self.assertEqual(notifs(alice), [['66', ['bob', b'']]])
+
+  def test_room_addresses_only_inside(self):
+    # #12: the room's members see each other's addresses, the rest of the lobby doesn't
+    alice = login('alice')
+    bob = login('bob')
+    carol = login('carol')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    room = lobby.find_room(int(room_id))
+    room.room_info.host_ip.ip = '203.0.113.7'
+    room.room_info.player_infos.append(self.player_info('alice'))
+    for clt in [alice, bob, carol]:
+      clt.conn.sent.clear()
+    # carol in the lobby: the room without addresses
+    lobby.send_group_info(carol, 1, 384)
+    rooms = notifs(carol)[0][1][3]
+    self.assertEqual(rooms[0][18], '0.0.0.0')
+    info = h5_data.H5_Serializer().deserialize_roominfo(rooms[0][10])
+    self.assertEqual((info.host_ip.ip, info.player_infos[0].ext_ip.ip, info.player_infos[0].local_ip.ip), ('0.0.0.0',) * 3)
+    # bob joins: inside the room he gets the host's addresses
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    msgs = notifs(bob)
+    room_data = [m for m in msgs if m[0] == '53'][0][1][2]
+    info = h5_data.H5_Serializer().deserialize_roominfo(room_data[10])
+    self.assertEqual((room_data[18], info.host_ip.ip, info.player_infos[0].local_ip.ip), ('127.0.0.1', '203.0.113.7', '192.168.0.41'))
+    joined = [m for m in msgs if m[0] == '50' and m[1][0] == 'alice'][0]
+    self.assertEqual(joined[1][3:5], ['127.0.0.1', '192.168.0.41'])
+    # carol, still outside, never got an address
+    self.assertNotIn('127.0.0.1', str(notifs(carol)))
+
+  def test_set_player_info_outside_lobby(self):
+    # clients outside any lobby don't get each other's player data (#58)
+    first = make_client('first')
+    second = make_client('second')
+    res = request(first, gsm.MESSAGE_TYPE.LOBBY_MSG, ['42', [b'data']])
+    self.assertEqual(res.dl.lst, ['38', ['42']])
+    self.assertEqual(notifs(second), [])
 
   def test_member_data_from_room_info(self):
     alice = login('alice')
@@ -206,6 +273,12 @@ class ProtocolTests(unittest.TestCase):
     res = request(clt, gsm.MESSAGE_TYPE.LOBBYSERVERLOGIN, ['alice', '0', '192.168.0.41', '255.255.255.0', '0'])
     self.assertEqual(res.dl.lst, ['210', ['1']])
 
+  def test_join_server_address(self):
+    # the advertised address, not the listening 0.0.0.0 (#56)
+    clt = make_client('alice')
+    res = request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['3', ['1']])
+    self.assertEqual(res.dl.lst, ['38', ['3', ['1', '10.0.0.1', '7785']]])
+
   def test_group_info_get_no_extra_reply(self):
     clt = login('alice')
     clt.conn.sent.clear()
@@ -219,6 +292,31 @@ class ProtocolTests(unittest.TestCase):
     # OPEN only (0x2) carries the dsFlags value before max players
     request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x2 | 0x8), '16', '4']])
     self.assertEqual(lobby.find_room(int(room_id)).gs_room.max_players, 4)
+class RoomConfigTests(unittest.TestCase):
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_only_the_host(self):
+    # another player can't change a room (#57)
+    alice = login('alice')
+    bob = login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    for clt in [alice, bob]:
+      clt.conn.sent.clear()
+    # refused like other bad requests: logged, no reply, the player stays connected
+    with self.assertRaises(ValueError):
+      request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x8 | 0x20), '8', 'owned']])
+    room = lobby.find_room(int(room_id))
+    self.assertEqual((room.gs_room.max_players, room.gs_room.room_password), (2, ''))
+    self.assertEqual(notifs(alice), [])
+    # the host can
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x8), '4']])
+    self.assertEqual(res.dl.lst, ['38', ['31', [room_id]]])
+    self.assertEqual(room.gs_room.max_players, 4)
+
 class RatedMatchTests(unittest.TestCase):
   """START_MATCH, SUBMIT_MATCH and MATCH_FINISH."""
   def setUp(self):
@@ -260,6 +358,89 @@ class RatedMatchTests(unittest.TestCase):
     match_id = notifs(alice)[-1][1][1]
     request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
     self.assertEqual(notifs(alice), [['71', [match_id, '39', ['0']]]])
+
+def values(result: str, race: str = '3'):
+  """22 values as the game submits them: result, race, ..., average level (16.16), seconds played."""
+  v = ['0'] * 22
+  v[0], v[1], v[16], v[17] = result, race, '65536', '87'
+  return v
+
+class RatedLadderTests(unittest.TestCase):
+  """Rated results update the ladder (#61)."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+    lobby.g_matches.clear()
+    import accounts
+    accounts.configure(accounts.MEMORY)
+    self.accounts = accounts
+    self.alice = accounts.login('alice', 'pw')
+    self.bob = accounts.login('bob', 'pw')
+
+  def tearDown(self):
+    self.accounts.configure(None)
+
+  def play(self, alice_says: str, bob_says: str):
+    alice, bob = login('alice'), login('bob')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    for clt in [alice, bob]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['17', [room_id, '1', '0']])
+    match_id = notifs(alice)[-1][1][1]
+    # every client submits every player's values
+    for clt, says in [(alice, alice_says), (bob, bob_says)]:
+      request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['30', [match_id, '0', ['alice', '21', '22', '0', values(says)],
+        ['bob', '21', '22', '0', values('0' if says == '1' else '1', '5')]]])
+    request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['45', [room_id]])
+    self.assertEqual(notifs(bob)[-1][0], '71')
+
+  def stats(self, account):
+    return self.accounts.ladder_stats(account, 'HEROES_657d2c2ebadc6a1d/1')
+
+  def test_winner_and_loser(self):
+    self.play('1', '1')
+    a, b = self.stats(self.alice), self.stats(self.bob)
+    self.assertEqual((a['RATING'], b['RATING']), (1516, 1484))
+    self.assertEqual((a['WINS'], a['LOSSES'], b['WINS'], b['LOSSES']), (1, 0, 0, 1))
+    self.assertEqual((a['W_DUNGEON'], a['G_DUNGEON'], b['L_INFERNO']), (1, 1, 1))
+    self.assertEqual((a['TOT_TIME_PLAYED'], a['AVERAGE_HERO_LEVEL'], a['CUR_WINS_STREAK']), (87, 65536, 1))
+    # a second win: the rating moves less, the streak grows
+    self.play('1', '1')
+    a = self.stats(self.alice)
+    self.assertEqual((a['RATING'], a['GAMES_PLAYED'], a['MAX_WINS_STREAK']), (1531, 2, 2))
+
+  def test_disagreement_settled_by_the_host(self):
+    # each claims the win (a client that quits early reports itself as the winner): the host's report,
+    # sent by the client that finished the match, counts
+    self.play('1', '0')
+    a, b = self.stats(self.alice), self.stats(self.bob)
+    self.assertEqual((a['WINS'], b['LOSSES'], a['RATING'], b['RATING']), (1, 1, 1516, 1484))
+
+  def test_disagreement_without_the_finisher_not_rated(self):
+    import ratings
+    self.assertIsNone(ratings.settled({'x': ['1'], 'y': ['0']}, 'z'))
+    self.assertEqual(ratings.settled({'x': ['1'], 'y': ['1']}, 'z'), ['1'])
+    self.assertEqual(ratings.settled({'x': ['1'], 'y': ['0']}, 'y'), ['0'])
+
+class RatingsTests(unittest.TestCase):
+  def test_apply(self):
+    import ratings
+    won = [int(x) for x in values('1')]
+    lost = [int(x) for x in values('2', '9')]
+    lost[17] = -5
+    out = ratings.apply([(1, won), (2, lost)], {1: {'RATING': 1600, 'GAMES_PLAYED': 1, 'AVERAGE_HERO_LEVEL': 3 << 16}})
+    # the favourite wins: a small gain; a disconnection is a loss; an unknown race and a negative time count nothing
+    self.assertEqual((out[1]['RATING'], out[2]['RATING']), (1612, 1488))
+    self.assertEqual(out[1]['AVERAGE_HERO_LEVEL'], 2 << 16)
+    self.assertEqual((out[2]['LOSSES'], out[2]['DISCONNECTIONS'], out[2]['TOT_TIME_PLAYED'], out[2]['G_HEAVEN']), (1, 1, 0, 0))
+    self.assertEqual(len(out[1]), 42)
+
+  def test_parse(self):
+    import ratings
+    self.assertEqual(len(ratings.parse(values('1'))), 22)
+    self.assertIsNone(ratings.parse(['1', '0']))
+    self.assertIsNone(ratings.parse(['x'] * 22))
 
 class JoinOrderTests(unittest.TestCase):
   def setUp(self):

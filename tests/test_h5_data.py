@@ -137,6 +137,14 @@ class H5_PlayerInfoTests(unittest.TestCase):
     self.assertEqual(info.local_ip.ip, "192.168.0.41")
     self.assertEqual(info.serialize(), buf)
 
+  def test_code_page_name(self):
+    # a name in the game's code page (0xE9 is 'é' in Windows-1252) parses and comes back unchanged (#55)
+    info = h5_data.H5_PlayerInfo()
+    info.username = b'caf\xe9'.decode('latin-1')
+    buf = info.serialize()
+    self.assertIn(b'caf\xe9', buf)
+    self.assertEqual(h5_data.H5_PlayerInfo(buf).serialize(), buf)
+
 class H5_RoomInfoRoundTripTests(unittest.TestCase):
   """Room info sent back to the players must match what the host sent."""
   def test_two_players(self):

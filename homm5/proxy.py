@@ -49,16 +49,19 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
 
 def handle_client(clt: client.TcpClient):
   """Serves a connected game client until it disconnects."""
+  reader = gsm.MessageReader()
   try:
     while True:
-      data = clt.conn.recv(4096)
+      data = clt.conn.recv(65536)
       if data:
-        req = gsm.Message(clt.sv_bf_key, in_buf=data)
-        print(req)
-        res = handle_req(clt, req)
-        if res:
-          print(res)
-          clt.conn.sendall(bytes(res))
+        # each message is decoded with the key current when it's handled (KEY_EXCHANGE sets it)
+        for frame in reader.feed(data):
+          req = gsm.Message(clt.sv_bf_key, in_buf=frame)
+          print(req)
+          res = handle_req(clt, req)
+          if res:
+            print(res)
+            clt.conn.sendall(bytes(res))
       else:
         print("No more data from", clt.addr)
         break

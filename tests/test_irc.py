@@ -104,6 +104,39 @@ class ChatTests(IrcTestCase):
     self.assertFalse(any('PRIVMSG' in l for l in alice.read()))
     self.assertTrue(bob.alive())
 
+  def test_long_line(self):
+    # frames of 256 bytes and more used to be cut short when decrypted
+    alice, bob = self.player('alice'), self.player('bob')
+    alice.read()
+    text = 'x' * 280
+    bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%1{text}')
+    self.assertTrue(any(l.endswith('%1' + text) for l in alice.read()))
+
+  def test_code_page_text(self):
+    # chat in the game's code page comes back byte for byte (#55)
+    alice, bob = self.player('alice'), self.player('bob')
+    alice.read()
+    msg = ircm.IRCMessage.from_str('')
+    text = 'Привет, café'.encode('cp1251', errors='ignore') + b' caf\xe9'
+    msg.payload = b'PRIVMSG ' + CHANNEL.encode() + b' :bob%16777215%9%0%0%Arial%1' + text + b'\r\n'
+    bob.sock.sendall(bytes(msg))
+    alice.sock.settimeout(1)
+    data = b''
+    try:
+      while text not in data:
+        chunk = alice.sock.recv(4096)
+        if not chunk:
+          break
+        alice.buf += chunk
+        while len(alice.buf) >= 2 and len(alice.buf) >= 2 + utils.read_u16_be(alice.buf[:2]):
+          size = utils.read_u16_be(alice.buf[:2])
+          data += ircm.IRCMessage(alice.buf[:2 + size]).payload
+          alice.buf = alice.buf[2 + size:]
+    except socket.timeout:
+      pass
+    self.assertIn(b'%1' + text + b'\r\n', data)
+    self.assertNotIn(b'\xef\xbf\xbd', data)
+
 class RobustnessTests(IrcTestCase):
   """Bad input gets an error reply, not a dropped connection."""
   def test_empty_parameters(self):

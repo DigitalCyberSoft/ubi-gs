@@ -40,7 +40,12 @@ def handle_ping(data: bytes, address: tuple[str, int], now: float):
     print(f'unknown ping id {data.hex()}')
     return []
   clt.last_seen = now
-  # the address the ping came from, over the SRP connection; this also keeps it alive (120s timeout)
+  if not clt.address_pending:
+    # already answered: a bare ACK keeps the SRP connection alive (the game drops it after 120s)
+    print(f'<RES: ACK> {clt.addr}:{clt.port}')
+    return [(srp.ack_segment(clt), (clt.addr, clt.port))]
+  clt.address_pending = False
+  # the address the ping came from, over the SRP connection
   msg = gsm.NatResponse(clt.nat_req, gsm.NAT_MSG.ADDRESS, utils.ipv4_to_u32_be(address[0]), address[1])
   res = srp.SRPResponse(None, clt, msg)
   print(res)
@@ -65,14 +70,15 @@ def handle_segment(data: bytes, address: tuple[str, int], now: float):
     print(f'added client {clt.addr}:{clt.port}')
   if clt is not None:
     clt.last_seen = now
-  # ConnectHost (SYN)
-  if req.segment.window:
+  # ConnectHost (SYN); a FIN from an unknown address has no client to answer for
+  if req.segment.window and clt is not None:
     res = srp.SRPResponse(req, clt)
     packets.append((bytes(res), address))
     print(res)
   # NAT message (address request), the address is sent when the game pings
-  elif req.segment.msg:
+  elif req.segment.msg and clt is not None:
     clt.nat_req = req.segment.msg
+    clt.address_pending = True
     if clt.ping_id is None:
       clt.ping_id = new_ping_id(CLIENTS)
     msg = gsm.NatResponse(clt.nat_req, gsm.NAT_MSG.PORT_ID, clt.ping_id, SERVER_ADDRESS[1])

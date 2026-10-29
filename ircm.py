@@ -20,7 +20,7 @@ class IRCMessage:
       self.payload = BLOWFISH.decrypt(bts[IRCM_HEADER_SIZE:IRCM_HEADER_SIZE + self.size])
 
   def __repr__(self):
-    return self.payload.decode(errors='replace')
+    return utils.game_str(self.payload)
 
   def __bytes__(self):
     """Encrypts and serializes the message to buffer."""
@@ -33,7 +33,7 @@ class IRCMessage:
   def from_str(text: str):
     """Creates an instance from plaintext."""
     msg = IRCMessage()
-    msg.payload = text.encode()
+    msg.payload = utils.game_bytes(text)
     msg.size = len(msg.payload)
     return msg
 

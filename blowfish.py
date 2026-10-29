@@ -390,7 +390,8 @@ class Cipher:
   
   def decrypt(self, src: bytes):
     src_size = len(src)
-    org_size = src[src_size - 2] + src[src_size - 1] * 16
+    # the plaintext length, a little-endian u16 written by `encrypt`
+    org_size = src[src_size - 2] + (src[src_size - 1] << 8)
     offset = (src_size - 2) % 8
     pad = offset if offset > 0 else 8
     size = src_size + 6 - pad

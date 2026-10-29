@@ -30,6 +30,14 @@ class StillAliveTests(unittest.TestCase):
     self.assertEqual(res.header.sender, gsm.SENDER_RECEIVER.S)
     self.assertEqual(res.header.receiver, gsm.SENDER_RECEIVER.P)
 
+  def test_size_without_payload(self):
+    # the request had a payload; the reply has none and must say 6 bytes (#59)
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.STILLALIVE, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['x']))))
+    self.assertGreater(buf[2], 6)
+    res = bytes(gsm.StillAliveResponse(gsm.Message(None, in_buf=buf)))
+    self.assertEqual(res, bytes([0x00, 0x00, 0x06, 0x01, 0x3A, 0x24]))
+
   def test_still_alive_response_type(self):
     req = gsm.Message(None, in_buf=bytes([0x00, 0x00, 0x06, 0x01, 0x3B, 0x42]))
     with self.assertRaises(TypeError):
@@ -54,6 +62,30 @@ class BundleTests(unittest.TestCase):
     bundle = gsm.GSMessageBundle(first, data[first.header.size:], client.TcpClient((None, None)))
     self.assertEqual(len(bundle.msgs), 2)
 
+class MessageReaderTests(unittest.TestCase):
+  """The TCP stream is cut into messages by their declared size."""
+  def test_split_and_coalesced(self):
+    one = bytes([0, 0, 6, 1, 58, 0x42])
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
+    big = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['42', [b'x' * 10000]]))))
+    stream = one + big + one
+    reader = gsm.MessageReader()
+    frames = []
+    # one byte at a time, then the rest in odd pieces
+    for i in range(0, 7):
+      frames += reader.feed(stream[i:i + 1])
+    for i in range(7, len(stream), 997):
+      frames += reader.feed(stream[i:i + 997])
+    self.assertEqual(frames, [one, big, one])
+    self.assertEqual(gsm.Message(None, in_buf=frames[1]).dl.lst, ['42', [b'x' * 10000]])
+    self.assertEqual(reader.feed(one * 3), [one] * 3)
+
+  def test_bad_sizes(self):
+    with self.assertRaises(BufferError):
+      gsm.MessageReader().feed(bytes([0, 0, 5, 1, 58, 0x42]))
+    with self.assertRaises(BufferError):
+      gsm.MessageReader().feed(bytes([0x10, 0, 0, 1, 58, 0x42]))
+
 class RedactionTests(unittest.TestCase):
   """Logs leave out credentials."""
   def test_login_password(self):
@@ -74,11 +106,29 @@ class LengthCapTests(unittest.TestCase):
       self.assertLess(len(field.encode('utf8')), size)
     self.assertEqual(fields[0], 'averyveryve')
 
-  def test_cap_character_boundary(self):
+  def test_cap_bytes(self):
     import utils
-    # 'é' is 2 bytes; never cut it in half
-    self.assertEqual(utils.cap('ééééééé', 12), 'ééééé')
+    # the game's strings are bytes in its code page: 'é' (0xE9 in Windows-1252) is one byte
+    self.assertEqual(utils.cap('é' * 15, 12), 'é' * 11)
     self.assertEqual(utils.cap('short', 12), 'short')
+
+class GameStringTests(unittest.TestCase):
+  """The game's bytes come back as they were sent (#55)."""
+  def test_round_trip(self):
+    raw = b's' + 'café'.encode('cp1252') + b'\x00s' + 'Привет'.encode('cp1251') + b'\x00'
+    lst = List.from_buf(bytearray(raw))
+    self.assertEqual(lst.to_buf(), raw)
+
+  def test_reply_keeps_bytes(self):
+    header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.PLAYERINFO, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+    name = 'caf\xe9'  # as read from the game's byte 0xE9
+    buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List([name]))))
+    res = gsm.PlayerInfoResponse(gsm.Message(None, in_buf=buf), name)
+    sent = bytes(res)
+    import gsxor
+    payload = gsxor.decrypt(sent[gsm.GSMSG_HEADER_SIZE:])
+    self.assertIn(b'scaf\xe9\x00', payload)
+    self.assertNotIn(b'\xc3\xa9', payload)
 
 if __name__ == '__main__':
   unittest.main()
