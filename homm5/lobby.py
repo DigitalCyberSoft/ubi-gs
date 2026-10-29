@@ -21,8 +21,8 @@ g_rooms: list[H5_Room] = []
 next_room_id = 1000
 """Global room id assignment counter."""
 
-MAX_ROOMS = 512
-"""Rooms open at once; a room holds up to a message's worth of its creator's data."""
+MAX_ROOMS = int(os.environ.get('UBIGS_MAX_ROOMS', '512'))
+"""Rooms open at once (UBIGS_MAX_ROOMS); a room holds up to a message's worth of its creator's data."""
 
 MAX_ROOM_MEMBERS = 16
 """Players and visitors of a room together (a Heroes V game has up to 8 players), so a room and its chat channel
