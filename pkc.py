@@ -1,4 +1,4 @@
-import rsa, utils
+import functools, rsa, utils
 
 MAX_RSA_MODULUS_LEN = 128
 """Max length of modulus (n) in bytes."""
@@ -42,6 +42,16 @@ class RsaPublicKey:
 
 def keygen():
   return rsa.newkeys(PUBLIC_KEY_LEN, exponent=3)
+
+@functools.cache
+def server_keys():
+  """
+  The key pair every key exchange of this process answers with, made at the first one.
+  A pair per exchange took about 250 ms of CPU, for anyone who asked before logging in. The server key only
+  decrypts the game's key, which is kept but not used: the session's Blowfish key goes to the game encrypted
+  to the game's own key.
+  """
+  return keygen()
 
 def encrypt(data: bytes, key: rsa.PublicKey):
   return rsa.encrypt(data, key)
