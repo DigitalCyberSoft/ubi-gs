@@ -224,3 +224,5 @@ An incomplete list of titles using GS SDK:
 - Heroes of Might and Magic V
 - Tom Clancy's Splinter Cell: Chaos Theory
 - Brothers in Arms: Road to Hill 30
+
+A fuller list, with the games that used `gsconnect.ubisoft.com` in-game and those that used the external ubi.com client, is kept in [this gist](https://gist.github.com/Joshhhuaaa/94579e63e52eea8c8d2a90f6f8a53b34).
