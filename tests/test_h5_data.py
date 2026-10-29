@@ -183,5 +183,110 @@ class H5_IPTests(unittest.TestCase):
     self.assertEqual(ip.ip, "192.168.0.41")
     self.assertEqual(ip.serialize(), buf)
 
+def fields_of(buf: bytes) -> list[tuple[int, bytes]]:
+  """A structure's fields, as (index, data)."""
+  fields = []
+  pos = 0
+  while pos < len(buf):
+    stream = h5_data.H5_Stream(buf[pos:])
+    fields.append((stream.id, bytes(stream.data)))
+    pos += len(stream)
+  return fields
+
+def structure(fields: list[tuple[int, bytes]]) -> bytes:
+  """A serialized structure with these fields."""
+  buf = bytearray()
+  for idx, data in fields:
+    stream = h5_data.H5_Stream()
+    stream.id, stream.data, stream.size = idx, data, len(data)
+    buf.extend(stream.write())
+  return h5_data.H5_Serializer().serialize_struct(bytes(buf))
+
+def data_of(buf: bytes) -> bytes:
+  return h5_data.H5_Serializer().data_stream(buf).data
+
+def room_info_160() -> bytes:
+  """A room info laid out like 1.60's, with the host's address and a player's addresses."""
+  info = h5_data.H5_RoomInfo()
+  info.group_name = "alice's Game"
+  info.guid = "00000000-0000-0000-0000-000000000000"
+  info.host_ip.family, info.host_ip.port, info.host_ip.ip = 2, 8888, "10.0.0.2"
+  player = h5_data.H5_PlayerInfo()
+  player.username = "alice"
+  player.ext_ip.family, player.ext_ip.port, player.ext_ip.ip = 2, 8888, "10.0.0.2"
+  player.local_port, player.local_ip.ip = 8888, "192.168.0.41"
+  info.player_infos = [player]
+  return h5_data.H5_Serializer().serialize_roominfo(info)
+
+class H5_LayoutTests(unittest.TestCase):
+  """The expansions don't lay out the room info like 1.60: the fields the lobby doesn't read go back as they
+  came, in their place, and the ones it changes are still changed."""
+  def relaid(self, edit) -> bytes:
+    return structure(edit(fields_of(data_of(room_info_160()))))
+
+  def test_other_layouts(self):
+    def other_form(fields):
+      # a field in another form, and a field 1.60 doesn't have
+      return [(idx, utils.write_u32(2) if idx == 12 else data) for idx, data in fields] + [(41, b'new')]
+    def other_fields(fields):
+      # fields 1.60 doesn't have, and some of its fields missing
+      out = []
+      for idx, data in fields:
+        if idx >= 37:
+          continue
+        out.append((idx, data))
+        if idx == 33:
+          out += [(34, utils.write_u32(7)), (35, b'\x01')]
+      return out
+    for edit, differences in [
+      (other_form, "kept as sent: 12 (size 4), 41 (size 3)"),
+      (other_fields, "kept as sent: 34 (size 4), 35 (size 1); missing: 37, 38, 39, 40"),
+    ]:
+      with self.subTest(edit.__name__):
+        buf = self.relaid(edit)
+        info = h5_data.H5_Serializer().deserialize_roominfo(buf)
+        self.assertEqual(h5_data.H5_Serializer().serialize_roominfo(info), buf)
+        self.assertEqual(info.differences(), differences)
+        # what the lobby changes
+        info.group_id = 77
+        info.host_ip.ip = "0.0.0.0"
+        info.player_infos[0].ext_ip.ip = info.player_infos[0].local_ip.ip = "0.0.0.0"
+        out = h5_data.H5_Serializer().serialize_roominfo(info)
+        again = h5_data.H5_Serializer().deserialize_roominfo(out)
+        self.assertEqual((again.group_id, again.host_ip.ip, again.player_infos[0].ext_ip.ip), (77, "0.0.0.0", "0.0.0.0"))
+        self.assertNotIn(bytes([10, 0, 0, 2]), out)
+        self.assertNotIn(bytes([192, 168, 0, 41]), out)
+        # the other fields in their place, unchanged
+        want, got = fields_of(data_of(buf)), fields_of(data_of(out))
+        self.assertEqual([idx for idx, _ in got], [idx for idx, _ in want])
+        self.assertEqual([f for f in got if f[0] not in (2, 4, 22)], [f for f in want if f[0] not in (2, 4, 22)])
+
+  def test_required_fields(self):
+    # the fields the lobby changes must be there in the form it knows, once
+    def without(idx):
+      return lambda fields: [f for f in fields if f[0] != idx]
+    for name, edit in [
+      ("no group id", without(2)),
+      ("no host address", without(4)),
+      ("no player list", without(22)),
+      ("host address in another form", lambda fields: [(idx, utils.write_u32(1) if idx == 4 else data) for idx, data in fields]),
+      ("host address twice", lambda fields: fields + [fields[2]]),
+      ("a field twice", lambda fields: fields + [(12, b'\x01')]),
+    ]:
+      with self.subTest(name):
+        with self.assertRaises(ValueError):
+          h5_data.H5_Serializer().deserialize_roominfo(self.relaid(edit))
+
+  def test_player_info_other_layout(self):
+    extra = b'\x06\x08\x01\x02\x03\x04'
+    buf = bytes.fromhex("02 0a 61 6c 69 63 65 03 24 02 20 02 00 22 b8 7f 00 00 01" + " 00" * 8 + " 04 2c 02 04 b8 22 03 20 c0 a8 00 29" + " 00" * 12 + " 05 08 ff ff ff ff") + extra
+    info = h5_data.H5_PlayerInfo(buf)
+    self.assertEqual(info.serialize(), buf)
+    info.ext_ip.ip = info.local_ip.ip = "0.0.0.0"
+    out = info.serialize()
+    self.assertNotIn(bytes([127, 0, 0, 1]), out)
+    self.assertNotIn(bytes([192, 168, 0, 41]), out)
+    self.assertTrue(out.endswith(extra))
+
 if __name__ == '__main__':
   unittest.main()

@@ -761,6 +761,10 @@ class CreateRoomResponse(GSMResponse):
     gs_room = Room(room_data, room_id, master)
     room_info = H5_Serializer().deserialize_roominfo(room_data["group_info"])
     print(room_info.__dict__)
+    differences = room_info.differences()
+    if differences:
+      # the expansions' room info
+      print(f"Room {room_id} info fields {differences}")
     # update IDs (-1, -1 initially)
     room_info.group_id = gs_room.group_id
     room_info.lobby_sv_id = gs_room.lobby_sv_id

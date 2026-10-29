@@ -205,6 +205,25 @@ class LobbyTests(unittest.TestCase):
     # carol, still outside, never got an address
     self.assertNotIn('127.0.0.1', str(notifs(carol)))
 
+  def test_room_info_of_another_layout(self):
+    # Hammers of Fate and Tribes of the East players couldn't create a game: the lobby refused their room
+    # info, which isn't laid out like 1.60's. The room is created, and its info reaches the lobby as sent.
+    alice = login('alice')
+    bob = login('bob')
+    notifs(alice)
+    notifs(bob)
+    data = h5_data.H5_Serializer().data_stream(ROOM_INFO).data
+    # without its last field (40, one byte) and with a field 1.60 doesn't have
+    self.assertEqual(data[-3:-1], b'\x28\x02')
+    room_info = h5_data.H5_Serializer().serialize_struct(data[:-3] + b'\x29\x06new')
+    res = request(alice, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', "alice's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', room_info, '', '', 'HEROES_c83663d1c69a2024', b'']])
+    room_id = res.dl.lst[1][1][0]
+    new_group = [m for m in notifs(bob) if m[0] == '54']
+    self.assertEqual(len(new_group), 1)
+    group_info = new_group[0][1][10]
+    self.assertIn(b'\x29\x06new', group_info)
+    self.assertEqual(h5_data.H5_Serializer().deserialize_roominfo(group_info).group_id, int(room_id))
+
   def test_set_player_info_outside_lobby(self):
     # clients outside any lobby don't get each other's player data (#58)
     first = make_client('first')

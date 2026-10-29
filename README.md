@@ -107,7 +107,7 @@ To go back to normal, remove the line.
 | Hammers of Fate | 2.1 | `HEROES_f4609f85d388479e` |
 | Tribes of the East | 3.1 | `HEROES_29988429c481f219` |
 
-Only 1.60 has been tested in-game against these services; the expansions are untested past gsinit.
+Only 1.60 has been tested in-game against these services; the expansions are untested past gsinit. The expansions lay out a room's data differently from 1.60: the server reads the fields it changes (the room's ids, the host's and the players' addresses) and passes the others on as the host sent them.
 
 **Logging in:** open Multi Player → ubi.com and type any name and password. There's no registration; the first login creates the account (#43).
 - **Logging in again with the same name and password** gets the same account back, with its friends, rating and profile data.
