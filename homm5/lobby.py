@@ -21,6 +21,13 @@ g_rooms: list[H5_Room] = []
 next_room_id = 1000
 """Global room id assignment counter."""
 
+MAX_ROOMS = 512
+"""Rooms open at once; a room holds up to a message's worth of its creator's data."""
+
+MAX_ROOM_MEMBERS = 16
+"""Players and visitors of a room together (a Heroes V game has up to 8 players), so a room and its chat channel
+can't gather a crowd of connections."""
+
 g_matches: dict[int, dict] = {}
 """Rated matches being played: match id -> {'group': room id, 'results': {player: values}}."""
 
@@ -192,14 +199,33 @@ def leave_room(clt: client.TcpClient):
   clt.is_visitor = False
   remaining = room_members(room_id)
   if room.gs_room.master == clt.username or len(remaining) == 0:
-    g_rooms.remove(room)
-    for member in remaining:
-      member.room_id = None
-    for member in lobby_members(room.gs_room.parent_id):
-      send_notif(member, gsm.LOBBY_MSG.GROUP_REMOVE, [str(room_id)])
+    close_room(room, remaining)
   else:
     send_member_leave(clt, room_id, remaining)
     send_room_update(room)
+
+def close_room(room: H5_Room, remaining: list[client.TcpClient]):
+  """Removes a room; its remaining members are back in the lobby, which is told."""
+  g_rooms.remove(room)
+  for member in remaining:
+    member.room_id = None
+  for member in lobby_members(room.gs_room.parent_id):
+    send_notif(member, gsm.LOBBY_MSG.GROUP_REMOVE, [str(room.gs_room.group_id)])
+
+def close_unjoined(clt: client.TcpClient):
+  """
+  Closes the rooms the client created but isn't in. The game joins its room right after creating it, and
+  `leave_room` closes a room only for a member, so these would stay for good.
+  """
+  for room in list(g_rooms):
+    if room.creator is clt and room.gs_room.group_id != clt.room_id:
+      close_room(room, room_members(room.gs_room.group_id))
+
+def client_gone(clt: client.TcpClient):
+  """Cleans up after a connection that ended."""
+  g_clients.remove(clt)
+  leave_lobby(clt)
+  close_unjoined(clt)
 
 def leave_lobby(clt: client.TcpClient):
   """Removes the client from its lobby (and room)."""
@@ -260,11 +286,16 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           send_group_info(clt, group_id, flags)
           res = NO_REPLY
         case gsm.LOBBY_MSG.CREATE_ROOM:
+          # one room waiting for its creator to join at a time
+          close_unjoined(clt)
+          if len(g_rooms) >= MAX_ROOMS:
+            raise ValueError(f'CREATE_ROOM refused: {len(g_rooms)} rooms are open')
           room_id = next_room_id
           next_room_id = next_room_id + 1
           res = gsm.CreateRoomResponse(req, g_rooms, room_id, clt.username)
           room = find_room(room_id)
           room.gs_room.ip_addr = clt.addr[0]
+          room.creator = clt
           # NEW_GROUP notification
           for member in lobby_members(room.gs_room.parent_id):
             if member is not clt and member.room_id is None:
@@ -285,6 +316,8 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           room = find_room(group_id)
           if room is None:
             raise ValueError("Failed to find the requested room on join.")
+          if clt.room_id != group_id and len(room_members(group_id)) >= MAX_ROOM_MEMBERS:
+            raise ValueError(f'JOIN_ROOM refused: room {group_id} is full')
           res = gsm.JoinRoomResponse(req)
           if clt.room_id is not None:
             leave_room(clt)
@@ -425,8 +458,7 @@ def handle_client(clt: client.TcpClient):
   finally:
     clt.conn.close()
     with g_lock:
-      g_clients.remove(clt)
-      leave_lobby(clt)
+      client_gone(clt)
 
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

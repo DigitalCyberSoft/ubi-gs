@@ -77,6 +77,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       # the name typed at login; the router knows its account
       clt.account = accounts.session(req.dl.lst[0], clt.addr[0])
       clt.username = clt.account.name if clt.account else req.dl.lst[0]
+      clt.typed_name = req.dl.lst[0]
       res = gsm.LoginWaitModuleResponse(req)
     case gsm.MESSAGE_TYPE.LOGINFRIENDS:
       res = gsm.LoginFriendsResponse(req)
@@ -141,8 +142,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       match req.dl.lst[0]:
         case '1':
           clt.game_pubkey = pkc.RsaPublicKey.from_buf(req.dl.lst[1][2]).to_pubkey()
-          # keygen
-          pub_key, priv_key = pkc.keygen()
+          pub_key, priv_key = pkc.server_keys()
           clt.sv_pubkey = pub_key
           clt.sv_privkey = priv_key
           res = gsm.KeyExchangeResponse(req, clt)
@@ -171,6 +171,8 @@ def handle_client(clt: client.TcpClient):
             res = handle_req(clt, msg)
             if res:
               send_response(clt, res)
+          # the IRC service lets a nick chat while its game is logged in
+          accounts.keep_session(clt)
       else:
         print("No more data from", clt.addr)
         break

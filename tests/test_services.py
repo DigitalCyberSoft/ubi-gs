@@ -6,7 +6,7 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))
 import router, router_wm, proxy, proxy_wm, lobby
-import gsm
+import gsm, pkc
 from data import List
 
 STILLALIVE = bytes([0x00, 0x00, 0x06, 0x01, 0x3A, 0x42])
@@ -142,6 +142,29 @@ class ProxyModuleTests(unittest.TestCase):
       self.assertEqual(sock.recv(64), b'')
     finally:
       sock.close()
+
+class KeyExchangeTests(unittest.TestCase):
+  def test_one_server_key(self):
+    # every exchange answers with the process's key (a key per exchange took about 250 ms of CPU, for anyone
+    # who asked), and each still ends with the game holding its session's Blowfish key
+    game_pub, game_priv = pkc.keygen()
+    buf = bytes(pkc.RsaPublicKey.from_pubkey(game_pub))
+    server_keys = []
+    start(router).close()
+    for _ in range(2):
+      sock = socket.create_connection(router.SERVER_ADDRESS, timeout=2)
+      try:
+        sock.sendall(game_message(gsm.MESSAGE_TYPE.KEY_EXCHANGE, ['1', ['1', str(len(buf)), buf]]))
+        server_key = bytes(gsm.Message(None, in_buf=sock.recv(4096)).dl.lst[1][2])
+        server_keys.append(server_key)
+        sv_pub = pkc.RsaPublicKey.from_buf(server_key).to_pubkey()
+        enc = pkc.encrypt(os.urandom(16), sv_pub)
+        sock.sendall(game_message(gsm.MESSAGE_TYPE.KEY_EXCHANGE, ['2', ['1', str(len(enc)), enc]]))
+        enc_key = bytes(gsm.Message(None, in_buf=sock.recv(4096)).dl.lst[1][2])
+        self.assertEqual(len(pkc.decrypt(enc_key, game_priv)), 16)
+      finally:
+        sock.close()
+    self.assertEqual(server_keys[0], server_keys[1])
 
 if __name__ == '__main__':
   unittest.main()

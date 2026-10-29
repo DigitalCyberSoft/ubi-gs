@@ -35,6 +35,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       accounts.bind_session(typed, clt.addr[0], account)
       clt.username = account.name
       clt.account = account
+      clt.typed_name = typed
       replace_older(clt)
       print(f"{typed} logged in as {account.name}")
       res = gsm.LoginResponse(req)
@@ -42,8 +43,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
       match req.dl.lst[0]:
         case '1':
           clt.game_pubkey = pkc.RsaPublicKey.from_buf(req.dl.lst[1][2]).to_pubkey()
-          # keygen
-          pub_key, priv_key = pkc.keygen()
+          pub_key, priv_key = pkc.server_keys()
           clt.sv_pubkey = pub_key
           clt.sv_privkey = priv_key
           res = gsm.KeyExchangeResponse(req, clt)
@@ -83,6 +83,8 @@ def handle_client(clt: client.TcpClient):
           if res:
             print(res)
             clt.conn.sendall(bytes(res))
+          # the IRC service lets a nick chat while its game is logged in
+          accounts.keep_session(clt)
       else:
         print("No more data from", clt.addr)
         break
