@@ -602,6 +602,8 @@ class H5_Room:
     """Rated match being played in the room."""
     self.creator = None
     """The lobby connection that created the room; it joins the room next."""
+    self.left: dict[str, float] = {}
+    """Players who left the room lately (the host announces them), and when."""
 
 class H5_Serializer:
   """Equivalent to the original `CStructureSaver` serializer (HoMM5)."""

@@ -4,9 +4,10 @@ The database is a file next to this module (`ubigs.db`), or UBIGS_DB. `UBIGS_DB=
 only: it is shared by the services running in one process and lost when that process ends.
 Passwords are stored as salted scrypt hashes only.
 """
-import hashlib, os, secrets, sqlite3, threading, time
+import hashlib, os, re, secrets, sqlite3, threading, time
 from dataclasses import dataclass
 from enum import Enum
+from utils import cap
 
 DEFAULT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ubigs.db')
 """Database file used when UBIGS_DB isn't set."""
@@ -114,6 +115,9 @@ def _migrate(conn: sqlite3.Connection):
   # live players per lobby, which the lobby service starts over at every start: not a schema change (the Go port
   # opens the same file and has no use for it)
   conn.execute('CREATE TABLE IF NOT EXISTS lobby_members (lobby INTEGER PRIMARY KEY, members INTEGER NOT NULL)')
+  # who is in each room, its host and who left it lately, for the IRC service: also restarted by the lobby service
+  conn.execute('CREATE TABLE IF NOT EXISTS room_members (room INTEGER NOT NULL, name TEXT NOT NULL, '
+    'typed TEXT NOT NULL, host INTEGER NOT NULL, gone REAL)')
 
 def db() -> sqlite3.Connection:
   """The open database. An unreadable file is moved aside (`.corrupt-<time>`) and a new one started."""
@@ -251,6 +255,43 @@ def set_lobby_counts(counts: dict[int, int]):
 def lobby_counts() -> dict[int, int]:
   """The number of players in each lobby that has any."""
   return dict(_query('SELECT lobby, members FROM lobby_members'))
+
+# rooms: the lobby service knows who is in them, the IRC service (another process) lets a room's host announce them
+
+ROOM_CHANNEL = re.compile(r'#LobbyGrp[0-9]+\.([0-9]+)')
+"""The IRC channel of a group: `#LobbyGrp<lobby server id>.<group id>`."""
+
+MEMBER_NAME_SIZE = 36
+"""The game's buffer for a member name, terminator included (0x004242d0, 0x00424f00)."""
+
+ANNOUNCE_WINDOW = 60
+"""Seconds after a player left its room during which the host may still announce it."""
+
+def set_room_members(rows: list[tuple[int, str, str, bool, float | None]]):
+  """Replaces the rooms' members: (room id, account name, typed name, is the host, when it left or None)."""
+  with _transaction() as conn:
+    conn.execute('DELETE FROM room_members')
+    conn.executemany('INSERT INTO room_members (room, name, typed, host, gone) VALUES (?, ?, ?, ?, ?)',
+      [(room, name, typed, int(host), gone) for room, name, typed, host, gone in rows])
+
+def announces(nick: str, channel: str, text: str) -> bool:
+  """
+  Whether the game of `nick` may post the chat announcement `text` (without its type digit) in an IRC channel, besides
+  the ones about itself. A room's host announces the players joining and leaving its room in the room's channel ("bob
+  has joined the game", "bob has left the game"), in the game's language, starting with the player's name as the host
+  was told it; the players don't announce each other. So the host of the room may announce the room's members, and
+  the players who left it in the last minute; nobody else may announce anyone.
+  """
+  match = ROOM_CHANNEL.fullmatch(channel)
+  if match is None:
+    return False
+  rows = _query('SELECT name, typed, host, gone FROM room_members WHERE room = ?', (int(match.group(1)),))
+  nick = nick.lower()
+  if not any(host and gone is None and nick in (name.lower(), typed.lower()) for name, typed, host, gone in rows):
+    return False
+  now = time.time()
+  return any(text.startswith(cap(name, MEMBER_NAME_SIZE) + ' ') for name, typed, host, gone in rows
+    if name and (gone is None or now - gone <= ANNOUNCE_WINDOW))
 
 # whether a game is still logged in: the router and its wait module refresh its session while it talks to them,
 # at least every 30 s while it is online; the IRC service, another process, asks

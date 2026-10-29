@@ -1,4 +1,4 @@
-import copy, socket, sys, os, threading
+import copy, re, socket, sys, os, threading, time
 # relative module import stuff
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
@@ -72,6 +72,9 @@ def refusal(req: gsm.Message, reason: int):
     # copied into a fixed buffer
     echo = cap(args[1], gsm.LOBBY_NAME_SIZE) if len(args) > 1 and isinstance(args[1], str) else ''
   return gsm.LobbyFailResponse(req, reason, echo)
+
+ANNOUNCE_WINDOW = 60
+"""Seconds after a player left its room during which the host may still announce it."""
 
 g_lock = threading.RLock()
 """Guards the global lobby state and sending to the clients."""
@@ -238,8 +241,10 @@ def leave_room(clt: client.TcpClient):
   if room.gs_room.master == clt.username or len(remaining) == 0:
     close_room(room, remaining)
   else:
+    note_left(room, clt.username)
     send_member_leave(clt, room_id, remaining)
     send_room_update(room)
+    publish_rooms()
 
 def close_room(room: H5_Room, remaining: list[client.TcpClient]):
   """Removes a room; its remaining members are back in the lobby, which is told."""
@@ -248,6 +253,34 @@ def close_room(room: H5_Room, remaining: list[client.TcpClient]):
     member.room_id = None
   for member in lobby_members(room.gs_room.parent_id):
     send_notif(member, gsm.LOBBY_MSG.GROUP_REMOVE, [str(room.gs_room.group_id)])
+  publish_rooms()
+
+def note_left(room: H5_Room, name: str):
+  """Remembers that the player left the room, for the host's announcement."""
+  now = time.time()
+  room.left = {n: at for n, at in room.left.items() if now - at <= ANNOUNCE_WINDOW}
+  room.left[name] = now
+
+def publish_rooms():
+  """
+  Shares who is in each room, who is its host and who left it lately with the IRC service (another process): a
+  room's host announces the players joining and leaving its room in the room's chat channel.
+  """
+  now = time.time()
+  rows = []
+  for room in g_rooms:
+    room_id = room.gs_room.group_id
+    for member in room_members(room_id):
+      rows.append((room_id, member.username, member.typed_name or member.username,
+        member.username == room.gs_room.master, None))
+    for name, at in room.left.items():
+      if now - at <= ANNOUNCE_WINDOW:
+        rows.append((room_id, name, name, False, at))
+  try:
+    accounts.set_room_members(rows)
+  except Exception as err:
+    # only the chat announcements depend on it: it must not stop the lobby
+    print(f'Room members not shared: {err!r}')
 
 def close_unjoined(clt: client.TcpClient):
   """
@@ -389,6 +422,7 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           # GROUP_INFO notification; the game takes the room from it, but ignores its members until the join reply
           send_group_info(clt, group_id, flags)
           res.after = lambda: join_room_members(clt, room)
+          publish_rooms()
         case gsm.LOBBY_MSG.GROUP_LEAVE:
           group_id = int(req.dl.lst[1][0])
           res = gsm.GroupLeaveResponse(req)
@@ -528,8 +562,9 @@ def handle_client(clt: client.TcpClient):
 def start_server():
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   ports.bind(sock, SERVER_ADDRESS, "lobby")
-  # nobody is in a lobby yet: counts left by a previous run go
+  # nobody is in a lobby yet: counts and rooms left by a previous run go
   publish_counts()
+  publish_rooms()
   print(f"Lobby server is listening on port {SERVER_ADDRESS[1]}")
   sock.listen(5)
     

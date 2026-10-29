@@ -6,7 +6,7 @@ os.environ.setdefault('UBIGS_DB', ':memory:')
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 sys.path.append(os.path.join(root_dir, 'homm5'))
-import client, gsm, lobby, h5_data, limits, router_wm
+import accounts, client, gsm, lobby, h5_data, limits, router_wm
 from data import List
 
 ROOM_INFO = bytes.fromhex(
@@ -578,6 +578,42 @@ class RefusalTests(unittest.TestCase):
     alice = login('alice')
     for sub in ['9', '34', '35', '44', '70', '99']:
       self.assertEqual(serve(alice, [sub, []]), [], sub)
+
+class AnnounceTests(unittest.TestCase):
+  """The host of a room announces the players joining and leaving it in the room's channel; nobody else announces
+  anyone (the IRC service asks the accounts database, where the lobby service puts its rooms)."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+    lobby.publish_rooms()
+
+  def test_host_announces_members(self):
+    alice, bob = login('alice'), login('bob')
+    room_id = create_only(alice)
+    join_room(alice, room_id)
+    join_room(bob, room_id)
+    channel = f'#LobbyGrp1.{room_id}'
+    for nick, ch, text, ok in [
+      ('alice', channel, 'bob has joined the game', True),
+      ('ALICE', channel, 'bob has joined the game', True),
+      ('alice', channel, 'alice has joined the game', True),
+      ('bob', channel, 'alice has joined the game', False),     # not the host
+      ('alice', channel, 'carol has joined the game', False),   # not in the room
+      ('alice', channel, 'bobby has joined the game', False),   # a name is a whole word
+      ('alice', channel, 'Server: bob has joined', False),      # about nobody
+      ('alice', '#LobbyGrp1.1', 'bob has joined the game', False),  # the lobby's channel
+      ('alice', '#LobbyGrp1.4242', 'bob has joined the game', False),
+      ('alice', '#other', 'bob has joined the game', False),
+    ]:
+      self.assertEqual(accounts.announces(nick, ch, text), ok, (nick, ch, text))
+    # bob leaves: alice announces it
+    request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['8', [room_id]])
+    self.assertTrue(accounts.announces('alice', channel, 'bob has left the game'))
+    with mock.patch.object(accounts.time, 'time', return_value=accounts.time.time() + accounts.ANNOUNCE_WINDOW + 5):
+      self.assertFalse(accounts.announces('alice', channel, 'bob has left the game'))
+    # the room is gone with its host
+    lobby.client_gone(alice)
+    self.assertFalse(accounts.announces('alice', channel, 'bob has left the game'))
 
 def lobby_list():
   """The lobby list the router's wait module sends: {lobby id: (max members, members)}."""

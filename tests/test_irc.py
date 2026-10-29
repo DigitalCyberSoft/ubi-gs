@@ -54,8 +54,9 @@ class Player:
 class IrcTestCase(unittest.TestCase):
   def setUp(self):
     self.server = gsirc.IRCServer(('127.0.0.1', 0), gsirc.IRCClient)
-    # any nick: the accounts check has its own tests
+    # any nick, and no one announces others: the accounts and rooms checks have their own tests
     self.server.allowed = None
+    self.server.announces = None
     self.port = self.server.server_address[1]
     threading.Thread(target=self.server.serve_forever, daemon=True).start()
     self.players = []
@@ -97,6 +98,32 @@ class ChatTests(IrcTestCase):
     self.assertFalse(any('PRIVMSG' in l for l in alice.read()))
     bob.send(f'PRIVMSG {CHANNEL} :bob%16777215%9%0%0%Arial%2bob has joined the game')
     self.assertTrue(any('2bob has joined the game' in l for l in alice.read()))
+
+  def test_host_announces_others(self):
+    # the announcement policy (a room's host, about its room's players) lets "bob has joined the game" through
+    asked = []
+    def announces(nick, channel, text):
+      asked.append((nick, channel, text))
+      return nick == 'alice' and channel == CHANNEL and text.startswith('bob ')
+    self.server.announces = announces
+    alice, bob, carol = self.player('alice'), self.player('bob'), self.player('carol')
+    bob.read()
+    carol.read()
+    alice.send(f'PRIVMSG {CHANNEL} :alice%16777215%9%0%0%Arial%2bob has joined the game')
+    for p in [bob, carol]:
+      self.assertTrue(any(l.endswith(f'PRIVMSG {CHANNEL} :alice%16777215%9%0%0%Arial%2bob has joined the game') for l in p.read()))
+    # only announcements about others ask the policy
+    asked.clear()
+    carol.send(f'PRIVMSG {CHANNEL} :carol%16777215%9%0%0%Arial%2carol has joined the game', f'PRIVMSG {CHANNEL} :carol%16777215%9%0%0%Arial%1hi')
+    self.assertEqual(len([l for l in bob.read() if 'PRIVMSG' in l]), 2)
+    self.assertEqual(asked, [])
+    for sender, line in [
+      (carol, f'PRIVMSG {CHANNEL} :carol%16777215%9%0%0%Arial%2bob has joined the game'),  # not the host
+      (alice, f'PRIVMSG {CHANNEL} :alice%16777215%9%0%0%Arial%2carol has left the game'),  # not allowed about carol
+      (alice, 'PRIVMSG bob :alice%16777215%9%0%0%Arial%2bob has joined the game'),  # not a channel
+    ]:
+      sender.send(line)
+      self.assertFalse(any('PRIVMSG' in l for l in bob.read()), line)
 
   def test_malformed_payloads_dropped(self):
     alice, bob = self.player('alice'), self.player('bob')
