@@ -1,4 +1,5 @@
 import sys, os, unittest
+from unittest import mock
 # relative module import stuff
 # accounts in memory, no database file from the tests
 os.environ.setdefault('UBIGS_DB', ':memory:')
@@ -458,6 +459,64 @@ class JoinOrderTests(unittest.TestCase):
     self.assertEqual([m[0] for m in sent[:3]], ['53', '38', '50'])
     self.assertEqual(sent[1], ['38', ['24', [room_id]]])
     self.assertEqual(sent[2][1][:3], ['alice', '0', room_id])
+
+GS_VERSION = 'HEROES_c83663d1c69a2024'
+
+def create_only(host: client.TcpClient):
+  """CREATE_ROOM without joining the room; returns its id."""
+  res = request(host, gsm.MESSAGE_TYPE.LOBBY_MSG, ['12', ['1', 'a room', 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', GS_VERSION, b'']])
+  return res.dl.lst[1][1][0]
+
+def join_room(clt: client.TcpClient, room_id: str):
+  request(clt, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', GS_VERSION]])
+
+def removed(clt: client.TcpClient):
+  """Ids of the GROUP_REMOVE notifications sent to the client."""
+  return [m[1][0] for m in notifs(clt) if m[0] == '55']
+
+class RoomLimitTests(unittest.TestCase):
+  """Rooms can't pile up in memory or gather a crowd."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_unjoined_rooms_closed(self):
+    # a room nobody joined goes when its creator creates another or leaves
+    alice, bob = login('alice'), login('bob')
+    first = create_only(alice)
+    notifs(bob)
+    second = create_only(alice)
+    self.assertEqual(removed(bob), [first])
+    lobby.client_gone(alice)
+    self.assertEqual(removed(bob), [second])
+    self.assertEqual(lobby.g_rooms, [])
+
+  def test_joined_room_stays(self):
+    alice = login('alice')
+    room_id = create_only(alice)
+    join_room(alice, room_id)
+    create_only(login('bob'))
+    self.assertIsNotNone(lobby.find_room(int(room_id)))
+
+  def test_room_cap(self):
+    with mock.patch.object(lobby, 'MAX_ROOMS', 2):
+      create_only(login('alice'))
+      create_only(login('bob'))
+      with self.assertRaises(ValueError):
+        create_only(login('carol'))
+    self.assertEqual(len(lobby.g_rooms), 2)
+
+  def test_room_full(self):
+    host = login('host')
+    room_id = create_only(host)
+    join_room(host, room_id)
+    for i in range(1, lobby.MAX_ROOM_MEMBERS):
+      join_room(login(f'p{i}'), room_id)
+    late = login('late')
+    with self.assertRaises(ValueError):
+      join_room(late, room_id)
+    self.assertIsNone(late.room_id)
+    self.assertEqual(len(lobby.room_members(int(room_id))), lobby.MAX_ROOM_MEMBERS)
 
 if __name__ == '__main__':
   unittest.main()

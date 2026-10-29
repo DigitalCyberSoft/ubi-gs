@@ -977,6 +977,8 @@ class H5_Room:
     self.room_info = info
     self.match_id: int = None
     """Rated match being played in the room."""
+    self.creator = None
+    """The lobby connection that created the room; it joins the room next."""
 
 class H5_Serializer:
   """Equivalent to the original `CStructureSaver` serializer (HoMM5)."""
