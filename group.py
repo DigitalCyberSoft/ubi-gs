@@ -126,11 +126,11 @@ class Group(ABC):
 
 class Lobby(Group):
   """Top-level group (server list)."""
-  def __init__(self, id: int, name: str, master: str, game_mode: int):
+  def __init__(self, id: int, name: str, master: str, game_mode: int, max_members: int = 8):
     super().__init__(id, name, master, game_mode)
     self.group_type = GROUP_TYPE.LOBBY.value
     self.nb_members = 0
-    self.max_members = 8
+    self.max_members = max_members
 
   def to_list(self):
     return [

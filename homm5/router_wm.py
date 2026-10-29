@@ -19,11 +19,12 @@ CLIENTS: list[client.TcpClient] = []
 """Global list of connected game clients."""
 
 LOBBIES: list[group.Lobby] = [
-  group.Lobby(1, "Casual", "", h5.GAME_MODE.STANDARD.value),
-  group.Lobby(2, "Ranked", "", h5.GAME_MODE.RATING.value),
-  group.Lobby(3, "1v1", "", h5.GAME_MODE.DUEL.value)
+  group.Lobby(1, "Casual", "", h5.GAME_MODE.STANDARD.value, limits.MAX_CONNECTIONS),
+  group.Lobby(2, "Ranked", "", h5.GAME_MODE.RATING.value, limits.MAX_CONNECTIONS),
+  group.Lobby(3, "1v1", "", h5.GAME_MODE.DUEL.value, limits.MAX_CONNECTIONS)
 ]
-"""Global list of available server lists."""
+"""Global list of available server lists. Each takes as many players as the lobby service's connection cap: a lobby
+with as many players as its maximum may read as full."""
 
 FRIEND_UNKNOWN = 1
 """`ADDFRIEND` failure reason: no such player."""
@@ -135,6 +136,10 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           res = gsm.LobbyMsgResponse(req)
         case gsm.LOBBY_MSG.CHANGE_REQUESTED_LOBBIES:
           game_name = req.dl.lst[1][0]
+          # the players in each lobby, which the lobby service counts
+          counts = accounts.lobby_counts()
+          for lobby in LOBBIES:
+            lobby.nb_members = counts.get(lobby.group_id, 0)
           res = gsm.GroupInfoResponse(req, LOBBIES)
         case _:
           raise NotImplementedError(f'No request handler for {subtype.name} lobby message.')
