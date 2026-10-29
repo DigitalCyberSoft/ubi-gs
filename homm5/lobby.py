@@ -36,6 +36,43 @@ next_match_id = 1
 NO_REPLY = object()
 """`handle_req` result for notifications: no reply and no echo."""
 
+class Refused(ValueError):
+  """A request the lobby refuses, for a reason the game shows (a `gsm.LOBBY_ERR_*` code)."""
+  def __init__(self, reason: int, message: str):
+    super().__init__(message)
+    self.reason = reason
+
+ANSWERED = {
+  gsm.LOBBY_MSG.GROUP_LEAVE, gsm.LOBBY_MSG.CREATE_ROOM, gsm.LOBBY_MSG.START_GAME, gsm.LOBBY_MSG.START_MATCH,
+  gsm.LOBBY_MSG.LOGIN, gsm.LOBBY_MSG.JOIN_LOBBY, gsm.LOBBY_MSG.JOIN_ROOM, gsm.LOBBY_MSG.SUBMIT_MATCH,
+  gsm.LOBBY_MSG.GROUP_CONFIG_UPDATE_RES, gsm.LOBBY_MSG.GAME_READY, gsm.LOBBY_MSG.SET_PLAYER_INFO,
+  gsm.LOBBY_MSG.MATCH_FINISH,
+}
+"""
+The `LOBBY_MSG` requests the game sends and then waits for the reply to, in a `CStateWait*Reply` state (or, for
+`LOGIN`, with nothing else to go on). Each reply decoder reads [result, [subtype, [reason, group id]]] for a refusal
+(`CREATE_ROOM`: [reason, room name]), shows the reason and goes back to the lobby; without a reply the game stays on
+its waiting screen for good. `GROUP_INFO_GET` is answered by a `GROUP_INFO` notification, and the rest are
+notifications.
+"""
+
+def refusal(req: gsm.Message, reason: int):
+  """The failure reply to a refused request the game waits for, or None."""
+  if req.header.type != gsm.MESSAGE_TYPE.LOBBY_MSG:
+    return None
+  try:
+    subtype = gsm.LOBBY_MSG(int(req.dl.lst[0]))
+  except (ValueError, IndexError, TypeError):
+    return None
+  if subtype not in ANSWERED:
+    return None
+  args = req.dl.lst[1] if len(req.dl.lst) > 1 and isinstance(req.dl.lst[1], list) else []
+  echo = args[0] if args and isinstance(args[0], str) else '0'
+  if subtype is gsm.LOBBY_MSG.CREATE_ROOM:
+    # copied into a fixed buffer
+    echo = cap(args[1], gsm.LOBBY_NAME_SIZE) if len(args) > 1 and isinstance(args[1], str) else ''
+  return gsm.LobbyFailResponse(req, reason, echo)
+
 g_lock = threading.RLock()
 """Guards the global lobby state and sending to the clients."""
 
@@ -302,10 +339,18 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           # one room waiting for its creator to join at a time
           close_unjoined(clt)
           if len(g_rooms) >= MAX_ROOMS:
-            raise ValueError(f'CREATE_ROOM refused: {len(g_rooms)} rooms are open')
+            raise Refused(gsm.LOBBY_ERR_CREATE_NOT_ALLOWED, f'CREATE_ROOM refused: {len(g_rooms)} rooms are open')
+          args = req.dl.lst[1]
+          if len(args) < 11:
+            raise ValueError('malformed CREATE_ROOM')
+          for i in (0, 3, 4, 5):
+            int(args[i])
           room_id = next_room_id
+          try:
+            res = gsm.CreateRoomResponse(req, g_rooms, room_id, clt.username)
+          except (ValueError, IndexError, KeyError, TypeError) as err:
+            raise Refused(gsm.LOBBY_ERR_CREATE_NOT_ALLOWED, f'CREATE_ROOM room info: {err!r}') from err
           next_room_id = next_room_id + 1
-          res = gsm.CreateRoomResponse(req, g_rooms, room_id, clt.username)
           room = find_room(room_id)
           room.gs_room.ip_addr = clt.addr[0]
           room.creator = clt
@@ -329,9 +374,9 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           flags = int(req.dl.lst[1][2]) # LSM (iconfig, group flags)
           room = find_room(group_id)
           if room is None:
-            raise ValueError("Failed to find the requested room on join.")
+            raise Refused(gsm.LOBBY_ERR_GROUP_NOT_EXIST, f'JOIN_ROOM refused: no room {group_id}')
           if clt.room_id != group_id and len(room_members(group_id)) >= MAX_ROOM_MEMBERS:
-            raise ValueError(f'JOIN_ROOM refused: room {group_id} is full')
+            raise Refused(gsm.LOBBY_ERR_NO_MORE_MEMBERS, f'JOIN_ROOM refused: room {group_id} is full')
           res = gsm.JoinRoomResponse(req)
           if clt.room_id is not None:
             leave_room(clt)
@@ -355,10 +400,10 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           group_id = int(req.dl.lst[1][0])
           room = find_room(group_id)
           if room is None:
-            raise ValueError(f'Room {group_id} not found on GROUP_CONFIG_UPDATE_RES.')
+            raise Refused(gsm.LOBBY_ERR_GROUP_NOT_EXIST, f'Room {group_id} not found on GROUP_CONFIG_UPDATE_RES.')
           if room.gs_room.master != clt.username:
             # only the host configures its room; the game sends this from the host only
-            raise ValueError(f'{clt.username} is not the host of room {group_id}.')
+            raise Refused(gsm.LOBBY_ERR_NOT_MASTER, f'{clt.username} is not the host of room {group_id}.')
           res = gsm.GroupConfigUpdateResultResponse(req, room)
           # process group_info buffer
           room.room_info = H5_Serializer().deserialize_roominfo(room.gs_room.group_info)
@@ -380,22 +425,26 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
           group_id = int(req.dl.lst[1][0])
           data = req.dl.lst[1][1]
           port = req.dl.lst[1][2]
-          res = gsm.LobbyGroupResponse(req)
           room = find_room(group_id)
-          if room is not None:
-            room.started = True
-            host_ip = clt.addr[0]
-            host_alt_ip = clt.local_ip or host_ip
-            res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.GAME_STARTED, [str(group_id), data, port, host_ip, host_alt_ip]) for m in room_members(group_id)]
+          if room is None:
+            # a success would leave the game waiting for GAME_STARTED
+            raise Refused(gsm.LOBBY_ERR_GROUP_NOT_EXIST, f'GAME_READY refused: no room {group_id}')
+          res = gsm.LobbyGroupResponse(req)
+          room.started = True
+          host_ip = clt.addr[0]
+          host_alt_ip = clt.local_ip or host_ip
+          res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.GAME_STARTED, [str(group_id), data, port, host_ip, host_alt_ip]) for m in room_members(group_id)]
         case gsm.LOBBY_MSG.START_MATCH:
           # rated game, the host starts it: [group id, ?, ?]; everyone in the room gets MATCH_STARTED with its id
           group_id = int(req.dl.lst[1][0])
-          res = gsm.LobbyGroupResponse(req)
           room = find_room(group_id)
-          if room is not None:
-            match_id = new_match(group_id)
-            room.match_id = match_id
-            res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.MATCH_STARTED, [str(group_id), str(match_id)]) for m in room_members(group_id)]
+          if room is None:
+            # a success would leave the game waiting for MATCH_STARTED
+            raise Refused(gsm.LOBBY_ERR_GROUP_NOT_EXIST, f'START_MATCH refused: no room {group_id}')
+          res = gsm.LobbyGroupResponse(req)
+          match_id = new_match(group_id)
+          room.match_id = match_id
+          res.after = lambda: [send_notif(m, gsm.LOBBY_MSG.MATCH_STARTED, [str(group_id), str(match_id)]) for m in room_members(group_id)]
         case gsm.LOBBY_MSG.SUBMIT_MATCH:
           # a player's results: [match id, ?, [player, max index, count, mask, [values]], ...]
           match = g_matches.get(int(req.dl.lst[1][0]))
@@ -444,6 +493,19 @@ def send_response(clt: client.TcpClient, res: gsm.GSMResponse):
   if after is not None:
     after()
 
+def serve_request(clt: client.TcpClient, msg: gsm.Message):
+  """Handles a request and sends its reply; a request the game waits for gets its refusal if it is refused."""
+  # shared lobby state and other players' sockets
+  with g_lock:
+    try:
+      res = handle_req(clt, msg)
+    except (NotImplementedError, ValueError, IndexError, TypeError) as err:
+      # an unknown or malformed request must not drop the player
+      print(f"Unhandled request from {clt.username}: {err!r}")
+      res = refusal(msg, getattr(err, 'reason', gsm.LOBBY_ERR_UNKNOWN))
+    if res is not None and res is not NO_REPLY:
+      send_response(clt, res)
+
 def handle_client(clt: client.TcpClient):
   """Serves a connected game client until it disconnects."""
   reader = gsm.MessageReader()
@@ -454,18 +516,7 @@ def handle_client(clt: client.TcpClient):
         for frame in reader.feed(data):
           msg = gsm.Message(clt.sv_bf_key, in_buf=frame)
           print(msg)
-          # shared lobby state and other players' sockets
-          with g_lock:
-            try:
-              res = handle_req(clt, msg)
-            except (NotImplementedError, ValueError, IndexError, TypeError) as err:
-              # an unknown or malformed request must not drop the player
-              print(f"Unhandled request from {clt.username}: {err!r}")
-              continue
-            if res is NO_REPLY:
-              pass
-            elif res:
-              send_response(clt, res)
+          serve_request(clt, msg)
       else:
         print("No more data from", clt.addr)
         break

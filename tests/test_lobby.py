@@ -307,9 +307,8 @@ class RoomConfigTests(unittest.TestCase):
     request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['24', [room_id, '', '448', '0', 'HEROES_c83663d1c69a2024']])
     for clt in [alice, bob]:
       clt.conn.sent.clear()
-    # refused like other bad requests: logged, no reply, the player stays connected
-    with self.assertRaises(ValueError):
-      request(bob, gsm.MESSAGE_TYPE.LOBBY_MSG, ['31', [room_id, str(0x8 | 0x20), '8', 'owned']])
+    # refused, not the host (13): logged, the player stays connected
+    self.assertEqual(serve(bob, ['31', [room_id, str(0x8 | 0x20), '8', 'owned']]), [['39', ['31', ['13', room_id]]]])
     room = lobby.find_room(int(room_id))
     self.assertEqual((room.gs_room.max_players, room.gs_room.room_password), (2, ''))
     self.assertEqual(notifs(alice), [])
@@ -517,6 +516,68 @@ class RoomLimitTests(unittest.TestCase):
       join_room(late, room_id)
     self.assertIsNone(late.room_id)
     self.assertEqual(len(lobby.room_members(int(room_id))), lobby.MAX_ROOM_MEMBERS)
+
+def serve(clt: client.TcpClient, data: list):
+  """Serves a `LOBBY_MSG` request as the lobby connection does, returns the replies (result 38 or 39) it sent."""
+  header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.S)
+  buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(data))))
+  clt.conn.sent.clear()
+  lobby.serve_request(clt, gsm.Message(None, in_buf=buf))
+  msgs = [gsm.Message(None, in_buf=b).dl.lst for b in clt.conn.sent]
+  clt.conn.sent.clear()
+  return [m for m in msgs if m[0] in ('38', '39')]
+
+class RefusalTests(unittest.TestCase):
+  """A request the game waits for is answered, also when it is refused: without the reply the game stays on its
+  waiting screen ("Creating game") for good."""
+  def setUp(self):
+    lobby.g_clients.clear()
+    lobby.g_rooms.clear()
+
+  def test_create_room_refused(self):
+    alice, bob = login('alice'), login('bob')
+    with mock.patch.object(lobby, 'MAX_ROOMS', 1):
+      join_room(alice, create_only(alice))
+      notifs(alice)
+      create = ['12', ['1', "bob's Game", 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', ROOM_INFO, '', '', GS_VERSION, b'']]
+      # [39, [12, [reason, room name]]]: 24, CREATENOTALLOWED
+      self.assertEqual(serve(bob, create), [['39', ['12', ['24', "bob's Game"]]]])
+      self.assertEqual(notifs(alice), [])
+    self.assertEqual(len(lobby.g_rooms), 1)
+
+  def test_unreadable_room_info(self):
+    bob = login('bob')
+    long = 'a name longer than the 36 bytes the game keeps'
+    res = serve(bob, ['12', ['1', long, 'HEROES_657d2c2ebadc6a1d', '7', '2', '0', b'\x01\x02\x03', '', '', GS_VERSION, b'']])
+    # the name cut to the game's buffer
+    self.assertEqual(res, [['39', ['12', ['24', long[:gsm.LOBBY_NAME_SIZE - 1]]]]])
+    self.assertEqual(serve(bob, ['12', ['1']]), [['39', ['12', ['0', '']]]])
+    self.assertEqual(lobby.g_rooms, [])
+
+  def test_join_room_refused(self):
+    host = login('host')
+    room_id = create_only(host)
+    join_room(host, room_id)
+    bob = login('bob')
+    self.assertEqual(serve(bob, ['24', ['4242', '', '448', '0', GS_VERSION]]), [['39', ['24', ['1', '4242']]]])
+    for i in range(1, lobby.MAX_ROOM_MEMBERS):
+      join_room(login(f'p{i}'), room_id)
+    # 7, NOMOREMEMBERS: "The game you're trying to enter is full."
+    self.assertEqual(serve(bob, ['24', [room_id, '', '448', '0', GS_VERSION]]), [['39', ['24', ['7', room_id]]]])
+
+  def test_every_request_answered(self):
+    alice = login('alice')
+    for sub, args, reason, echo in [
+      ('8', [], '0', '0'), ('15', [], '0', '0'), ('17', ['4242', '0', '0'], '1', '4242'), ('21', [], '0', '0'),
+      ('23', [], '0', '0'), ('24', ['4242', '0'], '0', '4242'), ('30', [], '0', '0'), ('31', ['4242', '0'], '1', '4242'),
+      ('33', ['4242', b'', '0'], '1', '4242'), ('42', [], '0', '0'), ('45', [], '0', '0'),
+    ]:
+      self.assertEqual(serve(alice, [sub, args]), [['39', [sub, [reason, echo]]]], sub)
+
+  def test_notifications_and_unknown_unanswered(self):
+    alice = login('alice')
+    for sub in ['9', '34', '35', '44', '70', '99']:
+      self.assertEqual(serve(alice, [sub, []]), [], sub)
 
 def lobby_list():
   """The lobby list the router's wait module sends: {lobby id: (max members, members)}."""

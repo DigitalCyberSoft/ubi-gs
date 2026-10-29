@@ -810,6 +810,34 @@ class LobbyGroupResponse(GSMResponse):
     result = str(MESSAGE_TYPE.GSSUCCESS.value)
     self.dl = List([result, [req.dl.lst[0], [req.dl.lst[1][0]]]])
 
+LOBBY_ERR_UNKNOWN = 0x00
+LOBBY_ERR_GROUP_NOT_EXIST = 0x01
+LOBBY_ERR_NO_MORE_MEMBERS = 0x07
+"""The game shows "The game you're trying to enter is full."."""
+LOBBY_ERR_NOT_MASTER = 0x0d
+LOBBY_ERR_CREATE_NOT_ALLOWED = 0x18
+"""Lobby server error codes (`GSLE_ERRORLOBBYSRV_*`), the reason of a refused `LOBBY_MSG` request. The game names each
+code (0x00b01ae0) and shows the text of that name from its MatchMakerErrors table; for a code without one it shows
+"Operation failed. Error occured in ubi.com Service <service>. Error code <reason>"."""
+
+LOBBY_NAME_SIZE = 36
+"""The game's buffer for the room name in a `CREATE_ROOM` reply, terminator included (0x00424d40)."""
+
+class LobbyFailResponse(GSMResponse):
+  """Refusal of a `LOBBY_MSG` request: [39, [subtype, [reason, echo]]].
+
+  The game reads the reason first (0x00420a20), then `echo`: the group id the request was about for most requests
+  (index 1 once the result isn't 38), the room name for `CREATE_ROOM` (0x00422500). A decoder that finds a field
+  missing drops the reply, and the game would wait for it for good."""
+  def __init__(self, req: Message, reason: int, echo: str):
+    if req.header.type != MESSAGE_TYPE.LOBBY_MSG:
+      raise TypeError(f"LobbyFailResponse constructed from {req.header.type} request.")
+    super().__init__(req)
+    self.header.property = PROPERTY.GS
+    self.header.type = MESSAGE_TYPE.LOBBY_MSG
+    result = str(MESSAGE_TYPE.GSFAIL.value)
+    self.dl = List([result, [req.dl.lst[0], [str(reason), echo]]])
+
 class GroupLeaveResponse(GSMResponse):
   """Response to `LOBBY_MSG.GROUP_LEAVE` messages."""
   def __init__(self, req: Message):
