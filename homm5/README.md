@@ -22,7 +22,7 @@ setvar net_ubi_cdkey_port = 42501
 ```
 
 ## What works
-- ubi.com login with accounts: a first login creates the account. If your name is taken, you get name-1; log in with the same name and password to get the same account back.
+- ubi.com login with accounts: a first login creates the account, and the same name and password get it back. A wrong password for a taken name is refused ("The password is not correct"); pick another name for a new account.
 - Lobby channels, the game list, the player list and chat.
 - Friends: add and remove them in the lobby, see who is online. The list is kept across restarts.
 - Ratings in the player list (1500 to start with).

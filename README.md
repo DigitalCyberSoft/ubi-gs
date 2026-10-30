@@ -111,10 +111,11 @@ Each game writes its own room info fields (Hammers of Fate and Tribes of the Eas
 
 **Logging in:** open Multi Player → ubi.com and type any name and password. There's no registration; the first login creates the account (#43).
 - **Logging in again with the same name and password** gets the same account back, with its friends, rating and profile data.
-- **A taken name:** if the name already belongs to an account with a different password, you get the next free name instead: `name-1`, `name-2`, and so on. Log in again with the same name and password and you get that same `name-k` account back.
+- **A wrong password is refused:** if the name already belongs to an account and the password doesn't match, the login fails with the game's usual "The password is not correct" (`INVALID_PASSWORD`). To make a new account, pick a name nobody has taken.
+- **Accounts named `name-1`, `name-2`, ...** were made by earlier versions, which gave a taken name the next free name of its family instead of refusing it. They are kept, and still log in with the name typed then (`name`) and their own password. No new ones are created.
 - **Names** are case-insensitive and at most 11 bytes, suffix included; longer names are cut. A name may not be empty or contain spaces or control characters, and the password may not be empty.
 - **Logging in twice:** a second login to the same account (for example after the game crashed) closes the older connection.
-- **Known limitation:** the game keeps the name you typed. If you were given `alice-1`, other players see you as `alice-1`, but your own lobby list still shows you as `alice`.
+- **Known limitation:** the game keeps the name you typed. If you log in to an earlier `alice-1` by typing `alice`, other players see you as `alice-1`, but your own lobby list still shows you as `alice`.
 - **CD key / Online Key:** any key is accepted. Ubisoft's key service is gone, so keys can't be checked.
 - **Use a throwaway password, never one you use anywhere else.** The game sends it in a form anyone on the network path can read (#15).
 
@@ -149,7 +150,7 @@ The services are public by default: they are meant to be reached by players over
   - or run gsconnect on a high port (`GSCONNECT_HOST=127.0.0.1 GSCONNECT_PORT=8080`) behind a reverse proxy that listens on port 80, for example nginx with `location / { proxy_pass http://127.0.0.1:8080; }` (#13). Set `UBIGS_HOST` to the public address in that case: behind the proxy gsconnect only sees `127.0.0.1` and would hand that to players.
 - **Logs.** The services print every request. Passwords and CD-key data are redacted (#4), but logs still hold player names, IP addresses and chat. Rotate them, keep them private, and redact them before sharing.
 - **Accounts** (#43).
-  - The first login with a name creates the account; a taken name with a different password gets `name-1`, `name-2`, …, so nobody is locked out and nobody can log in to someone else's account without their password.
+  - The first login with a name creates the account. A login to a taken name with a different password is refused (`INVALID_PASSWORD`), so nobody can log in to someone else's account without their password; no `name-1`, `name-2`, … accounts are created any more.
   - Passwords are stored only as salted scrypt hashes, in the SQLite file `ubigs.db` (or `UBIGS_DB`). Keep that file private and backed up.
   - `UBIGS_DB=:memory:` keeps accounts in memory only. That works only when all the services run in one process, not with `launch.py` or `homm5.bat`, which start one process per service.
   - The game still sends the password effectively in clear (#15), so the hash protects the stored file, not the login.
