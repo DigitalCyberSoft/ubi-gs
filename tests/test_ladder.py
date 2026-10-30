@@ -60,6 +60,7 @@ class LadderTests(unittest.TestCase):
   def test_own_typed_name(self):
     # the game asks with the name typed at login
     accounts.login('alice', 'one')
+    accounts.login('alice-1', 'two')
     second = accounts.login('alice', 'two')
     accounts.set_ladder_stats(second, ladder.ladder_key(GAME, '1'), {'RATING': 1400})
     accounts.bind_session('alice', '10.0.0.3', second)
