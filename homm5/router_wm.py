@@ -42,6 +42,13 @@ def send_notif(clt: client.TcpClient, msg: gsm.Message):
   except OSError as err:
     print(f'failed to notify {clt.username}: {err}')
 
+def lobbies():
+  """The lobbies, with the players the lobby service counts in each."""
+  counts = accounts.lobby_counts()
+  for lobby in LOBBIES:
+    lobby.nb_members = counts.get(lobby.group_id, 0)
+  return LOBBIES
+
 def send_friend_list(clt: client.TcpClient):
   """`UPDATEFRIEND` for each of the player's friends."""
   if clt.account is None:
@@ -134,13 +141,12 @@ def handle_req(clt: client.TcpClient, req: gsm.Message):
         case gsm.LOBBY_MSG.LOGIN:
           game_name = req.dl.lst[1][0]
           res = gsm.LobbyMsgResponse(req)
+          # 1.60 asks for the lobby list next (CHANGE_REQUESTED_LOBBIES). Hammers of Fate and Tribes of the East
+          # never ask: they wait for the list after the login, and show no lobby until it comes.
+          res.after = lambda: send_notif(clt, gsm.group_info(lobbies()))
         case gsm.LOBBY_MSG.CHANGE_REQUESTED_LOBBIES:
           game_name = req.dl.lst[1][0]
-          # the players in each lobby, which the lobby service counts
-          counts = accounts.lobby_counts()
-          for lobby in LOBBIES:
-            lobby.nb_members = counts.get(lobby.group_id, 0)
-          res = gsm.GroupInfoResponse(req, LOBBIES)
+          res = gsm.GroupInfoResponse(req, lobbies())
         case _:
           raise NotImplementedError(f'No request handler for {subtype.name} lobby message.')
     case gsm.MESSAGE_TYPE.KEY_EXCHANGE:

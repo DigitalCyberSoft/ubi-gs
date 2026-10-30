@@ -615,12 +615,21 @@ class AnnounceTests(unittest.TestCase):
     lobby.client_gone(alice)
     self.assertFalse(accounts.announces('alice', channel, 'bob has left the game'))
 
+def wm_lobby_msg(clt: client.TcpClient, data: list):
+  """Lets the router's wait module handle a `LOBBY_MSG` request, returns the response."""
+  header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
+  buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(data))))
+  return router_wm.handle_req(clt, gsm.Message(None, in_buf=buf))
+
+def lobbies(group_info: list):
+  """A lobby list (`GROUP_INFO`): {lobby id: (max members, members)}."""
+  assert group_info[0] == '53', group_info
+  return {int(entry[2]): (int(entry[12]), int(entry[13])) for entry in group_info[1][3]}
+
 def lobby_list():
   """The lobby list the router's wait module sends: {lobby id: (max members, members)}."""
-  header = gsm.GSMessageHeader.from_params(gsm.PROPERTY.GS, 1, gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.P, gsm.SENDER_RECEIVER.R)
-  buf = bytes(gsm.GSMNotification(gsm.Message(None, header=header, dl=List(['109', ['HEROES_657d2c2ebadc6a1d']]))))
-  res = router_wm.handle_req(client.TcpClient((FakeConn(), ('127.0.0.1', 60000))), gsm.Message(None, in_buf=buf))
-  return {int(entry[2]): (int(entry[12]), int(entry[13])) for entry in res.dl.lst[1][3]}
+  res = wm_lobby_msg(client.TcpClient((FakeConn(), ('127.0.0.1', 60000))), ['109', ['HEROES_657d2c2ebadc6a1d']])
+  return lobbies(res.dl.lst)
 
 class LobbyListTests(unittest.TestCase):
   """The lobby list shows how many players each lobby has."""
@@ -641,6 +650,19 @@ class LobbyListTests(unittest.TestCase):
     lobby.client_gone(bob)
     request(carol, gsm.MESSAGE_TYPE.LOBBY_MSG, ['8', ['3']])
     self.assertEqual(lobby_list(), {1: (cap, 1), 2: (cap, 0), 3: (cap, 0)})
+
+  def test_sent_after_the_lobby_login(self):
+    # Hammers of Fate and Tribes of the East never ask for the list (CHANGE_REQUESTED_LOBBIES), as 1.60 does:
+    # after the lobby login they wait for it, and list no lobby until it comes
+    clt = client.TcpClient((FakeConn(), ('127.0.0.1', 60000)))
+    router_wm.send_response(clt, wm_lobby_msg(clt, ['21', ['HEROES_29988429c481f219']]))
+    reply, notif = [gsm.Message(None, in_buf=buf) for buf in clt.conn.sent]
+    self.assertEqual(reply.dl.lst, ['38', ['21']])
+    self.assertEqual((notif.header.type, notif.header.sender), (gsm.MESSAGE_TYPE.LOBBY_MSG, gsm.SENDER_RECEIVER.R))
+    cap = limits.MAX_CONNECTIONS
+    self.assertEqual(lobbies(notif.dl.lst), {1: (cap, 0), 2: (cap, 0), 3: (cap, 0)})
+    # asking still gets it
+    self.assertEqual(lobby_list(), {1: (cap, 0), 2: (cap, 0), 3: (cap, 0)})
 
 if __name__ == '__main__':
   unittest.main()
