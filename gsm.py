@@ -646,6 +646,22 @@ class LobbyMsgResponse(GSMResponse):
       case _:
         raise NotImplementedError(f"Unsupported lobby message subtype {subtype.name}")
 
+def lobby_list(lobbies: list[Lobby]):
+  """`GROUP_INFO` of the lobbies: ['53', ['1', 0x100, ['0'], [lobby, ...]]]."""
+  msg_id = str(LOBBY_MSG.GROUP_INFO.value)
+  group_id = "1"
+  flag = str(0x100)
+  is_rooms = "0"
+  server_lists = []
+  for lobby in lobbies:
+    server_lists.append(lobby.to_list())
+  return List([msg_id, [group_id, flag, [is_rooms], server_lists]])
+
+def group_info(lobbies: list[Lobby]):
+  """The router's `GROUP_INFO` notification of the lobbies."""
+  header = GSMessageHeader.from_params(PROPERTY.GS, 1, MESSAGE_TYPE.LOBBY_MSG, SENDER_RECEIVER.R, SENDER_RECEIVER.P)
+  return Message(None, header=header, dl=lobby_list(lobbies))
+
 class GroupInfoResponse(GSMResponse):
   """Response to `LOBBY_MSG.CHANGE_REQUESTED_LOBBIES` messages."""
   def __init__(self, req: Message, lobbies: list[Lobby]):
@@ -654,14 +670,7 @@ class GroupInfoResponse(GSMResponse):
     super().__init__(req)
     self.header.property = PROPERTY.GS
     self.header.type = MESSAGE_TYPE.LOBBY_MSG
-    msg_id = str(LOBBY_MSG.GROUP_INFO.value)
-    group_id = "1"
-    flag = str(0x100)
-    is_rooms = "0"
-    server_lists = []
-    for lobby in lobbies:
-      server_lists.append(lobby.to_list())
-    self.dl = List([msg_id, [group_id, flag, [is_rooms], server_lists]])
+    self.dl = lobby_list(lobbies)
 
 class JoinLobbyServerResponse(GSMResponse):
   """Response to `LOBBY_MSG.JOIN_SERVER` messages."""
