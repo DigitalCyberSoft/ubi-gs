@@ -189,8 +189,10 @@ def login(name: str, password: str) -> Account:
   """Logs in to, or creates, the account for a name and password.
 
   1. The account `name` with this password.
-  2. Else the first of `name-1`, `name-2`, ... with this password.
-  3. Else a new account: `name` if free, else the lowest free `name-k`.
+  2. Else the first of `name-1`, `name-2`, ... with this password: accounts from before wrong passwords were refused,
+     when a taken name got the next free name of its family.
+  3. Else, if `name` is free, a new account `name`.
+  4. Else `LoginError(INVALID_PASSWORD)`: the name is taken and the password is wrong. No `name-k` is created.
   Names are case-insensitive and at most NAME_SIZE bytes.
   """
   name = cut(name.strip(), NAME_SIZE)
@@ -200,22 +202,21 @@ def login(name: str, password: str) -> Account:
     raise LoginError(LOGIN_ERROR.PASSWORD_MALFORMED)
   try:
     with _transaction() as conn:
-      candidates = [name]
-      k = 1
+      candidate, k = name, 1
       while True:
-        row = _row(conn, candidates[-1])
+        row = _row(conn, candidate)
         if row is None:
           break
         if _matches(row, password):
           return Account(row[0], row[1])
-        candidates.append(family_name(name, k))
-        k += 1
-      # the last candidate is the first free name of the family
-      new_name = candidates[-1]
+        candidate, k = family_name(name, k), k + 1
+      if candidate != name:
+        # the name is taken and the password matched none of its family: a wrong password
+        raise LoginError(LOGIN_ERROR.INVALID_PASSWORD)
       salt = secrets.token_bytes(16)
       cur = conn.execute('INSERT INTO accounts (name, hash, salt, created) VALUES (?, ?, ?, ?)',
-        (new_name, _hash(password, salt), salt, int(time.time())))
-      return Account(cur.lastrowid, new_name)
+        (name, _hash(password, salt), salt, int(time.time())))
+      return Account(cur.lastrowid, name)
   except sqlite3.Error as err:
     print(f'Accounts database error: {err!r}')
     raise LoginError(LOGIN_ERROR.DATABASE_FAILED)
